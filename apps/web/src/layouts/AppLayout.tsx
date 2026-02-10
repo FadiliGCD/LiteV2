@@ -77,6 +77,7 @@ export default function AppLayout() {
         <Stack sx={{ p: 1.5 }} spacing={1}>
           <NavItem to="/" label="Dashboard" />
           <NavItem to="/entree" label="Entree" />
+          <NavItem to="/parking" label="Parking" />
         </Stack>
 
         <Box sx={{ mt: "auto" }}>
