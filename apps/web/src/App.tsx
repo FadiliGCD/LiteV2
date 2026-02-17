@@ -6,6 +6,8 @@ import DashboardPage from "./pages/DashboardPage";
 import EntreePage from "./pages/EntreePage";
 import ParkingPage from "./pages/ParkingPage";
 import { getSession } from "./auth/auth";
+import SortiePage from "./pages/SortiePage";
+
 
 export default function App() {
   return (
@@ -29,6 +31,8 @@ export default function App() {
           />
 
           <Route path="parking" element={<ParkingPage />} />
+          <Route path="sortie" element={<SortiePage />} />
+
         </Route>
       </Routes>
     </BrowserRouter>

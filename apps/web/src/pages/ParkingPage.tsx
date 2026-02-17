@@ -1,4 +1,5 @@
 import * as React from "react";
+import dayjs from "dayjs";
 import {
   Alert,
   Box,
@@ -26,6 +27,9 @@ import {
 import { DataGrid } from "@mui/x-data-grid";
 import type { GridColDef } from "@mui/x-data-grid";
 
+// -----------------------------
+// Types
+// -----------------------------
 type ParkingItem = {
   entreeRowId: string; // link to entree row (kept as-is)
   Lot: string;
@@ -43,11 +47,61 @@ type ParkingReservation = {
   items: ParkingItem[];
 };
 
+// minimal Entree row type (only fields we need when selling)
+type EntreeRow = {
+  id: string;
+  Lot?: string;
+  Code_Prp?: string;
+  Date_production?: string;
+  Produit?: string;
+  Calibre?: string;
+  Qualite?: string;
+  "%_Ctrl"?: number | null;
+  Gr_mn?: number | null;
+  Gr_mx?: number | null;
+  Emballage?: string;
+  PU?: number | null;
+  Colis?: number | null;
+  Quantite?: number | null;
+};
+
+type SortieRow = {
+  id: string;
+
+  Date_Chg: string;
+  Dossier: string;
+  Client: string;
+  Mat_Transport: string;
+
+  Lot: string;
+  Date_production: string;
+  Produit: string;
+  Calibre: string;
+  Qualite: string;
+
+  "%_Ctrl": number | null;
+  Gr_mn: number | null;
+  Gr_mx: number | null;
+
+  Emballage: string;
+  PU: number | null;
+  Colis: number | null;
+  Quantite: number | null;
+};
+
+// -----------------------------
+// Storage keys
+// -----------------------------
 const PARKING_KEY = "lite-v2.parking.v1";
+const ENTREE_KEY = "lite-v2.entree.rows.v2";
+const SORTIE_KEY = "lite-v2.sortie.rows.v1";
 
 // example clients for now
 const CLIENTS = ["Client Atlas", "Client Marina", "Client Sahara"];
 
+// -----------------------------
+// Storage helpers
+// -----------------------------
 function loadParking(): ParkingReservation[] {
   try {
     const raw = localStorage.getItem(PARKING_KEY);
@@ -61,6 +115,37 @@ function saveParking(list: ParkingReservation[]) {
   localStorage.setItem(PARKING_KEY, JSON.stringify(list));
 }
 
+function loadEntreeRows(): EntreeRow[] {
+  try {
+    const raw = localStorage.getItem(ENTREE_KEY);
+    const arr = raw ? (JSON.parse(raw) as EntreeRow[]) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadSortieRows(): SortieRow[] {
+  try {
+    const raw = localStorage.getItem(SORTIE_KEY);
+    const arr = raw ? (JSON.parse(raw) as SortieRow[]) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSortieRows(rows: SortieRow[]) {
+  localStorage.setItem(SORTIE_KEY, JSON.stringify(rows));
+}
+
+function todayISO() {
+  return dayjs().format("YYYY-MM-DD");
+}
+
+// -----------------------------
+// Utilities
+// -----------------------------
 function fmtDate(iso: string) {
   try {
     const d = new Date(iso);
@@ -79,8 +164,17 @@ function safeNum(v: unknown, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function makeId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+// -----------------------------
+// Page
+// -----------------------------
 export default function ParkingPage() {
-  const [reservations, setReservations] = React.useState<ParkingReservation[]>(() => loadParking());
+  const [reservations, setReservations] = React.useState<ParkingReservation[]>(
+    () => loadParking()
+  );
   const [selectedId, setSelectedId] = React.useState<number | null>(null);
 
   const [info, setInfo] = React.useState<string>("");
@@ -159,7 +253,8 @@ export default function ParkingPage() {
 
   const validateEdit = () => {
     const newId = Number(editReservationId);
-    if (!Number.isFinite(newId) || newId <= 0) return "Reservation ID must be a positive number.";
+    if (!Number.isFinite(newId) || newId <= 0)
+      return "Reservation ID must be a positive number.";
     if (!editClient) return "Please choose a client.";
     if (!editItems.length) return "Reservation must contain at least 1 item.";
 
@@ -242,10 +337,53 @@ export default function ParkingPage() {
     setInfo("Send: will be implemented later (printable Word/PDF step).");
   };
 
+  // ✅ Sell -> push to Sortie + remove from Parking
   const handleSell = () => {
     if (!selected) return;
+
+    const entreeRows = loadEntreeRows();
+    const entreeById = new Map(entreeRows.map((r) => [String(r.id), r]));
+
+    const newSortieRows: SortieRow[] = (selected.items ?? []).map((it) => {
+      const e = entreeById.get(String(it.entreeRowId));
+
+      return {
+        id: makeId(),
+
+        Date_Chg: todayISO(),
+        Dossier: "",
+        Client: selected.client ?? "",
+        Mat_Transport: "",
+
+        Lot: String(e?.Lot ?? it.Lot ?? ""),
+        Date_production: String(e?.Date_production ?? ""),
+        Produit: String(e?.Produit ?? it.Produit ?? ""),
+        Calibre: String(e?.Calibre ?? it.Calibre ?? "nan"),
+        Qualite: String(e?.Qualite ?? it.Qualite ?? "nan"),
+
+        "%_Ctrl": (e?.["%_Ctrl"] ?? null) as any,
+        Gr_mn: (e?.Gr_mn ?? null) as any,
+        Gr_mx: (e?.Gr_mx ?? null) as any,
+
+        Emballage: String(e?.Emballage ?? ""),
+        PU: (e?.PU ?? null) as any,
+        Colis: (e?.Colis ?? null) as any,
+        Quantite: safeNum(it.reservedQty, 0),
+      };
+    });
+
+    const currentSortie = loadSortieRows();
+    saveSortieRows([...newSortieRows, ...currentSortie]);
+
+    const updatedParking = reservations.filter((r) => r.reservationId !== selected.reservationId);
+    saveParking(updatedParking);
+    setReservations(updatedParking);
+    setSelectedId(null);
+
     setError("");
-    setInfo("Sell: will be implemented later (push to Sortie).");
+    setInfo(
+      `Sold reservation #${selected.reservationId}. Moved ${newSortieRows.length} item(s) to Sortie.`
+    );
   };
 
   const updateItem = (idx: number, patch: Partial<ParkingItem>) => {
@@ -268,7 +406,11 @@ export default function ParkingPage() {
 
         <Stack direction="row" spacing={1} alignItems="center">
           <Chip variant="outlined" label={`Reservations: ${reservations.length}`} />
-          {selected ? <Chip color="info" label={`Selected: #${selected.reservationId}`} /> : <Chip label="No selection" />}
+          {selected ? (
+            <Chip color="info" label={`Selected: #${selected.reservationId}`} />
+          ) : (
+            <Chip label="No selection" />
+          )}
         </Stack>
       </Stack>
 

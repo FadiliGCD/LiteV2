@@ -16,13 +16,7 @@ import AppFooter from "../components/AppFooter";
 
 const drawerWidth = 260;
 
-function NavItem({
-  to,
-  label,
-}: {
-  to: string;
-  label: string;
-}) {
+function NavItem({ to, label }: { to: string; label: string }) {
   const loc = useLocation();
   const active = loc.pathname === to || (to === "/" && loc.pathname === "/");
   return (
@@ -76,8 +70,9 @@ export default function AppLayout() {
 
         <Stack sx={{ p: 1.5 }} spacing={1}>
           <NavItem to="/" label="Dashboard" />
-          <NavItem to="/entree" label="Entree" />
+          <NavItem to="/entree" label="Entreé" />
           <NavItem to="/parking" label="Parking" />
+          <NavItem to="/sortie" label="Sortie" />
         </Stack>
 
         <Box sx={{ mt: "auto" }}>
@@ -94,22 +89,13 @@ export default function AppLayout() {
       <Box sx={{ flexGrow: 1, display: "flex", flexDirection: "column" }}>
         <AppBar position="sticky" elevation={0} sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
           <Toolbar sx={{ display: "flex", gap: 2 }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Box
-              component="img"
-              src="/logo.png"
-              alt="AFB Global"
-              sx={{ height: 34, width: "auto" }}
-             />
-          </Box>
-
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Box component="img" src="/logo.png" alt="AFB Global" sx={{ height: 34, width: "auto" }} />
+            </Box>
 
             <Box sx={{ flexGrow: 1 }} />
 
-            <Paper
-              variant="outlined"
-              sx={{ px: 1.5, py: 0.6, borderRadius: 2, bgcolor: "background.paper" }}
-            >
+            <Paper variant="outlined" sx={{ px: 1.5, py: 0.6, borderRadius: 2, bgcolor: "background.paper" }}>
               <Typography variant="caption" sx={{ color: "text.secondary" }}>
                 Secure Session
               </Typography>
