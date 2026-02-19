@@ -11,8 +11,8 @@ import {
   Typography,
   Paper,
 } from "@mui/material";
-import { clearSession, getSession } from "../auth/auth";
 import AppFooter from "../components/AppFooter";
+import { getSession, onAuthChange, signOut } from "../auth/auth";
 
 const drawerWidth = 260;
 
@@ -38,10 +38,43 @@ function NavItem({ to, label }: { to: string; label: string }) {
 
 export default function AppLayout() {
   const nav = useNavigate();
-  const session = getSession();
 
-  const logout = () => {
-    clearSession();
+  const [sessionLabel, setSessionLabel] = React.useState<string>("");
+  const [checking, setChecking] = React.useState<boolean>(true);
+
+  React.useEffect(() => {
+    let mounted = true;
+
+    const setFromSession = (s: any) => {
+      if (!mounted) return;
+      if (!s) setSessionLabel("");
+      else setSessionLabel(`${s.user.email} • ${s.role}`);
+    };
+
+    const init = async () => {
+      try {
+        const s = await getSession();
+        setFromSession(s);
+      } finally {
+        if (mounted) setChecking(false);
+      }
+    };
+
+    init();
+
+    const { data } = onAuthChange((s) => {
+      setFromSession(s);
+      if (mounted) setChecking(false);
+    });
+
+    return () => {
+      mounted = false;
+      data?.subscription?.unsubscribe();
+    };
+  }, []);
+
+  const logout = async () => {
+    await signOut();
     nav("/login", { replace: true });
   };
 
@@ -63,7 +96,7 @@ export default function AppLayout() {
         <Stack sx={{ p: 2 }} spacing={1}>
           <Typography variant="h6">Lite V2</Typography>
           <Typography variant="caption" sx={{ color: "text.secondary" }}>
-            {session?.username} • {session?.role}
+            {checking ? "Checking session..." : sessionLabel || "Not signed in"}
           </Typography>
         </Stack>
         <Divider />

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  Alert,
   Box,
   Button,
   Paper,
@@ -9,29 +10,47 @@ import {
   Typography,
   Divider,
 } from "@mui/material";
-import { setSession } from "../auth/auth";
 import AppFooter from "../components/AppFooter";
+import { signInWithEmail, signUpWithEmail } from "../auth/auth";
 
 export default function LoginPage() {
   const nav = useNavigate();
-  const [username, setUsername] = React.useState("");
+
+  const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
 
-  const onLogin = () => {
-    // TEMP (frontend-only):
-    // admin/admin => superuser
-    // user/user => user
-    if (username === "admin" && password === "admin") {
-      setSession({ username, role: "superuser" });
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string>("");
+  const [info, setInfo] = React.useState<string>("");
+
+  const onLogin = async () => {
+    setError("");
+    setInfo("");
+    setLoading(true);
+    try {
+      await signInWithEmail(email.trim(), password);
       nav("/", { replace: true });
-      return;
+    } catch (e: any) {
+      setError(e?.message ?? "Login failed");
+    } finally {
+      setLoading(false);
     }
-    if (username === "user" && password === "user") {
-      setSession({ username, role: "user" });
-      nav("/", { replace: true });
-      return;
+  };
+
+  const onSignUp = async () => {
+    setError("");
+    setInfo("");
+    setLoading(true);
+    try {
+      await signUpWithEmail(email.trim(), password);
+      setInfo(
+        "Account created. If email confirmation is enabled, check your inbox. Otherwise you can sign in now."
+      );
+    } catch (e: any) {
+      setError(e?.message ?? "Sign up failed");
+    } finally {
+      setLoading(false);
     }
-    alert("Invalid credentials");
   };
 
   return (
@@ -72,16 +91,19 @@ export default function LoginPage() {
               Sign in
             </Typography>
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
-              Enter your credentials to continue.
+              Use your email + password (Supabase Auth).
             </Typography>
 
             <Divider />
 
+            {info ? <Alert severity="success">{info}</Alert> : null}
+            {error ? <Alert severity="error">{error}</Alert> : null}
+
             <TextField
-              label="Username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
+              label="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
               fullWidth
             />
             <TextField
@@ -93,12 +115,30 @@ export default function LoginPage() {
               fullWidth
             />
 
-            <Button variant="contained" size="large" onClick={onLogin}>
-              Login
-            </Button>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+              <Button
+                variant="contained"
+                size="large"
+                onClick={onLogin}
+                disabled={loading}
+                fullWidth
+              >
+                {loading ? "Please wait..." : "Login"}
+              </Button>
+
+              <Button
+                variant="outlined"
+                size="large"
+                onClick={onSignUp}
+                disabled={loading}
+                fullWidth
+              >
+                Create Account
+              </Button>
+            </Stack>
 
             <Typography variant="caption" sx={{ color: "text.secondary" }}>
-              Demo: admin/admin (superuser), user/user (user)
+              Admin access is controlled by the <b>profiles.role</b> value in Supabase.
             </Typography>
           </Stack>
         </Paper>

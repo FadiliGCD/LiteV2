@@ -1,6 +1,5 @@
 import * as React from "react";
 import dayjs from "dayjs";
-import * as XLSX from "xlsx";
 import {
   Alert,
   Box,
@@ -23,39 +22,18 @@ import {
 import { DataGrid, GridToolbar, useGridApiRef } from "@mui/x-data-grid";
 import type { GridColDef, GridCellParams, GridFilterModel } from "@mui/x-data-grid";
 
-import type { Emballage, CodePrp, Produit, Qualite } from "@lite/shared";
-import {
-  CODE_PRP_OPTIONS,
-  PRODUIT_OPTIONS,
-  QUALITE_OPTIONS,
-  EMBALLAGE_OPTIONS,
-  CALIBRE_BY_PRODUIT,
-} from "@lite/shared";
+import type { Emballage, Produit, Qualite } from "@lite/shared";
+import { PRODUIT_OPTIONS, QUALITE_OPTIONS, EMBALLAGE_OPTIONS, CALIBRE_BY_PRODUIT } from "@lite/shared";
+
+import { supabase } from "../lib/supabaseClient";
 
 /**
- * Sortie columns order requested:
- * Date Chg (auto)
- * Dossier (user)
- * Client (auto)
- * Mat Transport (user)
- * Lot (auto)
- * Date Production (auto)
- * Produit (auto)
- * Caliber (auto)
- * Qualité (auto)
- * %Ctrl (auto)
- * Gr Mn (auto)
- * Gr Mx (auto)
- * Emballage (auto)
- * Pu (auto)
- * Colis (auto)
- * Quantite (auto)
+ * UI fields (requested order)
  */
-
 type SortieRow = {
   id: string;
 
-  Date_Chg: string; // YYYY-MM-DD (auto)
+  Date_Chg: string; // YYYY-MM-DD
   Dossier: string;
   Client: string;
   Mat_Transport: string;
@@ -93,55 +71,10 @@ type FilterForm = {
   Quantite_max: string;
 };
 
-const SORTIE_KEY = "lite-v2.sortie.rows.v1";
-
-function makeId() {
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-function todayISO() {
-  return dayjs().format("YYYY-MM-DD");
-}
-function stableStringify(obj: unknown) {
-  return JSON.stringify(obj);
-}
 function toNumberOrNull(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(String(v).replace("%", "").trim());
   return Number.isFinite(n) ? n : null;
-}
-function newEmptyRow(): SortieRow {
-  return {
-    id: makeId(),
-    Date_Chg: todayISO(),
-    Dossier: "",
-    Client: "",
-    Mat_Transport: "",
-    Lot: "",
-    Date_production: "",
-    Produit: "",
-    Calibre: "nan",
-    Qualite: "nan",
-    "%_Ctrl": null,
-    Gr_mn: null,
-    Gr_mx: null,
-    Emballage: "",
-    PU: null,
-    Colis: null,
-    Quantite: null,
-  };
-}
-
-function loadSortie(): SortieRow[] {
-  try {
-    const raw = localStorage.getItem(SORTIE_KEY);
-    const arr = raw ? (JSON.parse(raw) as SortieRow[]) : [];
-    return Array.isArray(arr) && arr.length ? arr : [newEmptyRow()];
-  } catch {
-    return [newEmptyRow()];
-  }
-}
-function saveSortie(rows: SortieRow[]) {
-  localStorage.setItem(SORTIE_KEY, JSON.stringify(rows));
 }
 
 function emptyFilterForm(): FilterForm {
@@ -163,11 +96,86 @@ function emptyFilterForm(): FilterForm {
   };
 }
 
+/**
+ * DB row shape (snake_case in Supabase)
+ */
+type SortieDbRow = {
+  id: string;
+  date_chg: string | null;
+  dossier: string | null;
+  client: string | null;
+  mat_transport: string | null;
+
+  lot: string | null;
+  date_production: string | null;
+  produit: string | null;
+  calibre: string | null;
+  qualite: string | null;
+
+  pct_ctrl: number | null;
+  gr_mn: number | null;
+  gr_mx: number | null;
+
+  emballage: string | null;
+  pu: number | null;
+  colis: number | null;
+  quantite: number | null;
+};
+
+function dbToUi(r: SortieDbRow): SortieRow {
+  return {
+    id: r.id,
+    Date_Chg: r.date_chg ?? "",
+    Dossier: r.dossier ?? "",
+    Client: r.client ?? "",
+    Mat_Transport: r.mat_transport ?? "",
+
+    Lot: r.lot ?? "",
+    Date_production: r.date_production ?? "",
+    Produit: (r.produit as any) ?? "",
+    Calibre: r.calibre ?? "nan",
+    Qualite: (r.qualite as any) ?? "nan",
+
+    "%_Ctrl": r.pct_ctrl ?? null,
+    Gr_mn: r.gr_mn ?? null,
+    Gr_mx: r.gr_mx ?? null,
+
+    Emballage: (r.emballage as any) ?? "",
+    PU: r.pu ?? null,
+    Colis: r.colis ?? null,
+    Quantite: r.quantite ?? null,
+  };
+}
+
+function uiToDb(r: SortieRow) {
+  return {
+    date_chg: r.Date_Chg || null,
+    dossier: r.Dossier || null,
+    client: r.Client || null,
+    mat_transport: r.Mat_Transport || null,
+
+    lot: r.Lot || null,
+    date_production: r.Date_production || null,
+    produit: r.Produit || null,
+    calibre: r.Calibre || null,
+    qualite: r.Qualite || null,
+
+    pct_ctrl: r["%_Ctrl"],
+    gr_mn: r.Gr_mn,
+    gr_mx: r.Gr_mx,
+
+    emballage: r.Emballage || null,
+    pu: r.PU,
+    colis: r.Colis,
+    quantite: r.Quantite,
+  };
+}
+
 export default function SortiePage() {
   const apiRef = useGridApiRef();
 
-  const [rows, setRows] = React.useState<SortieRow[]>(() => loadSortie());
-  const [lastSavedRows, setLastSavedRows] = React.useState<SortieRow[]>(() => loadSortie());
+  const [rows, setRows] = React.useState<SortieRow[]>([]);
+  const [loading, setLoading] = React.useState(true);
 
   const [filterModel, setFilterModel] = React.useState<GridFilterModel>({ items: [] });
 
@@ -178,10 +186,30 @@ export default function SortiePage() {
   const [openFilter, setOpenFilter] = React.useState(false);
   const [filterForm, setFilterForm] = React.useState<FilterForm>(() => emptyFilterForm());
 
-  const hasUnsavedChanges = React.useMemo(
-    () => stableStringify(rows) !== stableStringify(lastSavedRows),
-    [rows, lastSavedRows]
-  );
+  const fetchRows = React.useCallback(async () => {
+    setLoading(true);
+    setInfo("");
+    setErrorMessages([]);
+
+    const { data, error } = await supabase
+      .from("sortie")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      setErrorMessages([error.message]);
+      setLoading(false);
+      return;
+    }
+
+    const ui = (data as SortieDbRow[]).map(dbToUi);
+    setRows(ui);
+    setLoading(false);
+  }, []);
+
+  React.useEffect(() => {
+    fetchRows();
+  }, [fetchRows]);
 
   // ✅ single-click edit
   const handleCellClick = React.useCallback(
@@ -259,23 +287,8 @@ export default function SortiePage() {
     ];
   }, []);
 
-  const handleSave = () => {
-    setLastSavedRows(rows);
-    saveSortie(rows);
-    setInfo("Saved.");
-    setErrorMessages([]);
-  };
-
-  const handleCancel = () => {
-    const snap = loadSortie();
-    setRows(snap);
-    setLastSavedRows(snap);
-    setInfo("Restored last saved snapshot.");
-    setErrorMessages([]);
-  };
-
   // =========================
-  // Filter (same technique as Entreé)
+  // Filter dialog -> converts to filterModel
   // =========================
   const hasAnyMultiFilter = (f: FilterForm) =>
     Object.values(f).some((v) => String(v ?? "").trim() !== "");
@@ -295,7 +308,8 @@ export default function SortiePage() {
 
     if (f.DateProd_from.trim())
       items.push({ field: "Date_production", operator: ">=", value: f.DateProd_from.trim() });
-    if (f.DateProd_to.trim()) items.push({ field: "Date_production", operator: "<=", value: f.DateProd_to.trim() });
+    if (f.DateProd_to.trim())
+      items.push({ field: "Date_production", operator: "<=", value: f.DateProd_to.trim() });
 
     if (f.Produit.trim()) items.push({ field: "Produit", operator: "equals", value: f.Produit.trim() });
     if (f.Calibre.trim()) items.push({ field: "Calibre", operator: "contains", value: f.Calibre.trim() });
@@ -328,6 +342,24 @@ export default function SortiePage() {
     setInfo("Filter cleared.");
   };
 
+  // =========================
+  // DB persistence (auto-save)
+  // =========================
+  const persistRow = async (row: SortieRow) => {
+    const payload = uiToDb(row);
+
+    const { error } = await supabase.from("sortie").update(payload).eq("id", row.id);
+    if (error) {
+      setErrorMessages([error.message]);
+      throw error;
+    }
+  };
+
+  const handleRefresh = async () => {
+    await fetchRows();
+    setInfo("Refreshed from database.");
+  };
+
   const FilterRow = ({ children }: { children: React.ReactNode }) => (
     <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 2 }}>
       {children}
@@ -339,21 +371,21 @@ export default function SortiePage() {
       <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={2}>
         <Box>
           <Typography variant="h5">Sortie</Typography>
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            Shared database mode (Supabase)
+          </Typography>
         </Box>
 
         <Stack direction="row" spacing={1} alignItems="center">
-          {hasUnsavedChanges ? <Chip color="warning" label="Unsaved changes" /> : <Chip color="success" label="Saved" />}
           <Chip variant="outlined" label={`Rows: ${rows.length}`} />
+          {loading ? <Chip color="info" label="Loading..." /> : <Chip color="success" label="Live" />}
         </Stack>
       </Stack>
 
       <Paper sx={{ p: 1.2, borderRadius: 3 }}>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-          <Button variant="outlined" onClick={handleSave} disabled={!hasUnsavedChanges}>
-            Save
-          </Button>
-          <Button variant="text" onClick={handleCancel}>
-            Cancel
+          <Button variant="outlined" onClick={handleRefresh} disabled={loading}>
+            Refresh
           </Button>
 
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
@@ -364,6 +396,12 @@ export default function SortiePage() {
           <Button variant="text" onClick={clearFilter}>
             Clear Filter
           </Button>
+
+          <Box sx={{ flexGrow: 1 }} />
+
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+            Changes are saved automatically.
+          </Typography>
         </Stack>
       </Paper>
 
@@ -386,6 +424,7 @@ export default function SortiePage() {
             rows={rows}
             columns={columns}
             getRowId={(r) => r.id}
+            loading={loading}
             initialState={{ density: "compact" }}
             editMode="cell"
             disableRowSelectionOnClick
@@ -394,15 +433,25 @@ export default function SortiePage() {
             slots={{ toolbar: GridToolbar }}
             slotProps={{ toolbar: { showQuickFilter: false } as any }}
             onCellClick={handleCellClick}
-            processRowUpdate={(newRow: SortieRow) => {
+            processRowUpdate={async (newRow: SortieRow) => {
               const cleaned: SortieRow = {
                 ...newRow,
                 Calibre: newRow.Calibre?.trim() ? newRow.Calibre : "nan",
+                Date_Chg: newRow.Date_Chg?.trim()
+                  ? newRow.Date_Chg
+                  : dayjs().format("YYYY-MM-DD"),
               };
+
+              // optimistic UI
               setRows((prev) => prev.map((r) => (r.id === cleaned.id ? cleaned : r)));
+
+              // persist to DB
+              await persistRow(cleaned);
+
+              setInfo("Saved.");
               return cleaned;
             }}
-            isCellEditable={() => true} // no restrictions as requested
+            isCellEditable={() => true}
           />
         </Box>
       </Paper>

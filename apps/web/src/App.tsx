@@ -5,9 +5,7 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import EntreePage from "./pages/EntreePage";
 import ParkingPage from "./pages/ParkingPage";
-import { getSession } from "./auth/auth";
 import SortiePage from "./pages/SortiePage";
-
 
 export default function App() {
   return (
@@ -24,15 +22,9 @@ export default function App() {
           }
         >
           <Route index element={<DashboardPage />} />
-
-          <Route
-            path="entree"
-            element={<EntreePage role={getSession()?.role ?? "user"} />}
-          />
-
+          <Route path="entree" element={<EntreePage role="superuser" />} />
           <Route path="parking" element={<ParkingPage />} />
           <Route path="sortie" element={<SortiePage />} />
-
         </Route>
       </Routes>
     </BrowserRouter>

@@ -27,11 +27,14 @@ import {
 import { DataGrid } from "@mui/x-data-grid";
 import type { GridColDef } from "@mui/x-data-grid";
 
+import { supabase } from "../lib/supabaseClient";
+
 // -----------------------------
-// Types
+// Types (UI)
 // -----------------------------
 type ParkingItem = {
-  entreeRowId: string; // link to entree row (kept as-is)
+  id?: string;
+  entreeRowId: string;
   Lot: string;
   Code_Prp: string;
   Produit: string;
@@ -65,83 +68,30 @@ type EntreeRow = {
   Quantite?: number | null;
 };
 
-type SortieRow = {
-  id: string;
+type SortieInsert = {
+  date_chg: string | null;
+  dossier: string | null;
+  client: string | null;
+  mat_transport: string | null;
 
-  Date_Chg: string;
-  Dossier: string;
-  Client: string;
-  Mat_Transport: string;
+  lot: string | null;
+  date_production: string | null;
+  produit: string | null;
+  calibre: string | null;
+  qualite: string | null;
 
-  Lot: string;
-  Date_production: string;
-  Produit: string;
-  Calibre: string;
-  Qualite: string;
+  pct_ctrl: number | null;
+  gr_mn: number | null;
+  gr_mx: number | null;
 
-  "%_Ctrl": number | null;
-  Gr_mn: number | null;
-  Gr_mx: number | null;
-
-  Emballage: string;
-  PU: number | null;
-  Colis: number | null;
-  Quantite: number | null;
+  emballage: string | null;
+  pu: number | null;
+  colis: number | null;
+  quantite: number | null;
 };
-
-// -----------------------------
-// Storage keys
-// -----------------------------
-const PARKING_KEY = "lite-v2.parking.v1";
-const ENTREE_KEY = "lite-v2.entree.rows.v2";
-const SORTIE_KEY = "lite-v2.sortie.rows.v1";
 
 // example clients for now
 const CLIENTS = ["Client Atlas", "Client Marina", "Client Sahara"];
-
-// -----------------------------
-// Storage helpers
-// -----------------------------
-function loadParking(): ParkingReservation[] {
-  try {
-    const raw = localStorage.getItem(PARKING_KEY);
-    const arr = raw ? (JSON.parse(raw) as ParkingReservation[]) : [];
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-function saveParking(list: ParkingReservation[]) {
-  localStorage.setItem(PARKING_KEY, JSON.stringify(list));
-}
-
-function loadEntreeRows(): EntreeRow[] {
-  try {
-    const raw = localStorage.getItem(ENTREE_KEY);
-    const arr = raw ? (JSON.parse(raw) as EntreeRow[]) : [];
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-
-function loadSortieRows(): SortieRow[] {
-  try {
-    const raw = localStorage.getItem(SORTIE_KEY);
-    const arr = raw ? (JSON.parse(raw) as SortieRow[]) : [];
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveSortieRows(rows: SortieRow[]) {
-  localStorage.setItem(SORTIE_KEY, JSON.stringify(rows));
-}
-
-function todayISO() {
-  return dayjs().format("YYYY-MM-DD");
-}
 
 // -----------------------------
 // Utilities
@@ -154,29 +104,175 @@ function fmtDate(iso: string) {
     return iso;
   }
 }
-
 function sumQty(items: ParkingItem[]) {
   return items.reduce((acc, it) => acc + Number(it.reservedQty ?? 0), 0);
 }
-
 function safeNum(v: unknown, fallback = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
+function todayISO() {
+  return dayjs().format("YYYY-MM-DD");
+}
 
-function makeId() {
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+// -----------------------------
+// Supabase helpers
+// -----------------------------
+async function fetchParking(): Promise<ParkingReservation[]> {
+  // Get reservations
+  const { data: res, error: resErr } = await supabase
+    .from("parking_reservations")
+    .select("reservation_id, client, created_at")
+    .order("created_at", { ascending: false });
+
+  if (resErr) throw new Error(resErr.message);
+
+  const reservationIds = (res ?? []).map((r: any) => Number(r.reservation_id));
+  if (!reservationIds.length) return [];
+
+  // Get items for all reservations
+  const { data: items, error: itemsErr } = await supabase
+    .from("parking_items")
+    .select("id, reservation_id, entree_id, lot, code_prp, produit, calibre, qualite, reserved_qty")
+    .in("reservation_id", reservationIds);
+
+  if (itemsErr) throw new Error(itemsErr.message);
+
+  const itemsByRes = new Map<number, ParkingItem[]>();
+  for (const it of items ?? []) {
+    const rid = Number((it as any).reservation_id);
+    const arr = itemsByRes.get(rid) ?? [];
+    arr.push({
+      id: String((it as any).id),
+      entreeRowId: String((it as any).entree_id ?? ""),
+      Lot: String((it as any).lot ?? ""),
+      Code_Prp: String((it as any).code_prp ?? ""),
+      Produit: String((it as any).produit ?? ""),
+      Calibre: String((it as any).calibre ?? "nan"),
+      Qualite: String((it as any).qualite ?? "nan"),
+      reservedQty: safeNum((it as any).reserved_qty, 0),
+    });
+    itemsByRes.set(rid, arr);
+  }
+
+  return (res ?? []).map((r: any) => ({
+    reservationId: Number(r.reservation_id),
+    client: String(r.client ?? ""),
+    createdAt: String(r.created_at ?? ""),
+    items: itemsByRes.get(Number(r.reservation_id)) ?? [],
+  }));
+}
+
+async function reservationIdExists(reservationId: number) {
+  const { data, error } = await supabase
+    .from("parking_reservations")
+    .select("reservation_id")
+    .eq("reservation_id", reservationId)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return !!data;
+}
+
+async function updateReservationId(oldId: number, newId: number) {
+  // Update reservation row
+  const { error: u1 } = await supabase
+    .from("parking_reservations")
+    .update({ reservation_id: newId })
+    .eq("reservation_id", oldId);
+
+  if (u1) throw new Error(u1.message);
+
+  // Update items FK
+  const { error: u2 } = await supabase
+    .from("parking_items")
+    .update({ reservation_id: newId })
+    .eq("reservation_id", oldId);
+
+  if (u2) throw new Error(u2.message);
+}
+
+async function updateReservationClient(reservationId: number, client: string) {
+  const { error } = await supabase
+    .from("parking_reservations")
+    .update({ client })
+    .eq("reservation_id", reservationId);
+
+  if (error) throw new Error(error.message);
+}
+
+async function replaceReservationItems(reservationId: number, items: ParkingItem[]) {
+  // Delete old
+  const { error: delErr } = await supabase
+    .from("parking_items")
+    .delete()
+    .eq("reservation_id", reservationId);
+
+  if (delErr) throw new Error(delErr.message);
+
+  // Insert new
+  const payload = items.map((it) => ({
+    reservation_id: reservationId,
+    entree_id: it.entreeRowId || null,
+    lot: it.Lot || null,
+    code_prp: it.Code_Prp || null,
+    produit: it.Produit || null,
+    calibre: it.Calibre || null,
+    qualite: it.Qualite || null,
+    reserved_qty: safeNum(it.reservedQty, 0),
+  }));
+
+  const { error: insErr } = await supabase.from("parking_items").insert(payload);
+  if (insErr) throw new Error(insErr.message);
+}
+
+async function deleteReservation(reservationId: number) {
+  // items will cascade if FK is set with on delete cascade, but we handle safely anyway
+  await supabase.from("parking_items").delete().eq("reservation_id", reservationId);
+  const { error } = await supabase.from("parking_reservations").delete().eq("reservation_id", reservationId);
+  if (error) throw new Error(error.message);
+}
+
+async function fetchEntreeByIds(ids: string[]): Promise<Map<string, EntreeRow>> {
+  if (!ids.length) return new Map();
+
+  const { data, error } = await supabase
+    .from("entree")
+    .select("id, lot, code_prp, date_production, produit, calibre, qualite, pct_ctrl, gr_mn, gr_mx, emballage, pu, colis, quantite")
+    .in("id", ids);
+
+  if (error) throw new Error(error.message);
+
+  const m = new Map<string, EntreeRow>();
+  for (const r of data ?? []) {
+    m.set(String((r as any).id), {
+      id: String((r as any).id),
+      Lot: String((r as any).lot ?? ""),
+      Code_Prp: String((r as any).code_prp ?? ""),
+      Date_production: (r as any).date_production ? String((r as any).date_production) : "",
+      Produit: String((r as any).produit ?? ""),
+      Calibre: String((r as any).calibre ?? "nan"),
+      Qualite: String((r as any).qualite ?? "nan"),
+      "%_Ctrl": (r as any).pct_ctrl ?? null,
+      Gr_mn: (r as any).gr_mn ?? null,
+      Gr_mx: (r as any).gr_mx ?? null,
+      Emballage: String((r as any).emballage ?? ""),
+      PU: (r as any).pu ?? null,
+      Colis: (r as any).colis ?? null,
+      Quantite: (r as any).quantite ?? null,
+    });
+  }
+  return m;
 }
 
 // -----------------------------
 // Page
 // -----------------------------
 export default function ParkingPage() {
-  const [reservations, setReservations] = React.useState<ParkingReservation[]>(
-    () => loadParking()
-  );
-  const [selectedId, setSelectedId] = React.useState<number | null>(null);
+  const [reservations, setReservations] = React.useState<ParkingReservation[]>([]);
+  const [loading, setLoading] = React.useState(true);
 
+  const [selectedId, setSelectedId] = React.useState<number | null>(null);
   const [info, setInfo] = React.useState<string>("");
   const [error, setError] = React.useState<string>("");
 
@@ -193,6 +289,23 @@ export default function ParkingPage() {
     () => reservations.find((r) => r.reservationId === selectedId) ?? null,
     [reservations, selectedId]
   );
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const list = await fetchParking();
+      setReservations(list);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load parking.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    load();
+  }, [load]);
 
   // keep selection valid after changes
   React.useEffect(() => {
@@ -211,9 +324,9 @@ export default function ParkingPage() {
     ];
   }, []);
 
-  const rows = React.useMemo(() => {
+  const gridRows = React.useMemo(() => {
     return reservations.map((r) => ({
-      id: r.reservationId, // DataGrid row id
+      id: r.reservationId,
       reservationId: r.reservationId,
       client: r.client,
       createdAt: fmtDate(r.createdAt),
@@ -222,11 +335,11 @@ export default function ParkingPage() {
     }));
   }, [reservations]);
 
-  const refresh = () => {
-    const data = loadParking();
-    setReservations(data);
-    setInfo("Refreshed.");
+  const refresh = async () => {
+    setInfo("");
     setError("");
+    await load();
+    setInfo("Refreshed.");
   };
 
   const openModifyDialog = () => {
@@ -253,8 +366,7 @@ export default function ParkingPage() {
 
   const validateEdit = () => {
     const newId = Number(editReservationId);
-    if (!Number.isFinite(newId) || newId <= 0)
-      return "Reservation ID must be a positive number.";
+    if (!Number.isFinite(newId) || newId <= 0) return "Reservation ID must be a positive number.";
     if (!editClient) return "Please choose a client.";
     if (!editItems.length) return "Reservation must contain at least 1 item.";
 
@@ -265,16 +377,10 @@ export default function ParkingPage() {
     const anyPositive = editItems.some((it) => safeNum(it.reservedQty, 0) > 0);
     if (!anyPositive) return "At least one item must have Reserved Qty > 0.";
 
-    // If changing ID, ensure uniqueness
-    if (selected && newId !== selected.reservationId) {
-      const exists = reservations.some((r) => r.reservationId === newId);
-      if (exists) return `Reservation ID ${newId} already exists. Choose another.`;
-    }
-
     return "";
   };
 
-  const confirmModify = () => {
+  const confirmModify = async () => {
     if (!selected) return;
 
     const msg = validateEdit();
@@ -283,34 +389,44 @@ export default function ParkingPage() {
       return;
     }
 
-    const newId = Number(editReservationId);
+    try {
+      setError("");
+      setInfo("");
 
-    const cleanedItems: ParkingItem[] = editItems.map((it) => ({
-      entreeRowId: String(it.entreeRowId ?? ""),
-      Lot: String(it.Lot ?? ""),
-      Code_Prp: String(it.Code_Prp ?? ""),
-      Produit: String(it.Produit ?? ""),
-      Calibre: String(it.Calibre ?? ""),
-      Qualite: String(it.Qualite ?? ""),
-      reservedQty: safeNum(it.reservedQty, 0),
-    }));
+      const newId = Number(editReservationId);
+      const oldId = selected.reservationId;
 
-    const updated: ParkingReservation[] = reservations.map((r) => {
-      if (r.reservationId !== selected.reservationId) return r;
-      return {
-        ...r,
-        reservationId: newId,
-        client: editClient,
-        items: cleanedItems,
-      };
-    });
+      // If changing ID: ensure uniqueness
+      if (newId !== oldId) {
+        const exists = await reservationIdExists(newId);
+        if (exists) {
+          setError(`Reservation ID ${newId} already exists. Choose another.`);
+          return;
+        }
+        await updateReservationId(oldId, newId);
+      }
 
-    saveParking(updated);
-    setReservations(updated);
-    setSelectedId(newId);
-    setOpenModify(false);
-    setError("");
-    setInfo(`Reservation updated (#${newId}).`);
+      await updateReservationClient(newId, editClient);
+
+      const cleanedItems: ParkingItem[] = editItems.map((it) => ({
+        entreeRowId: String(it.entreeRowId ?? ""),
+        Lot: String(it.Lot ?? ""),
+        Code_Prp: String(it.Code_Prp ?? ""),
+        Produit: String(it.Produit ?? ""),
+        Calibre: String(it.Calibre ?? ""),
+        Qualite: String(it.Qualite ?? ""),
+        reservedQty: safeNum(it.reservedQty, 0),
+      }));
+
+      await replaceReservationItems(newId, cleanedItems);
+
+      setOpenModify(false);
+      setSelectedId(newId);
+      await load();
+      setInfo(`Reservation updated (#${newId}).`);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to update reservation.");
+    }
   };
 
   const openDeleteDialog = () => {
@@ -319,16 +435,17 @@ export default function ParkingPage() {
     setOpenDelete(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!selected) return;
-
-    const updated = reservations.filter((r) => r.reservationId !== selected.reservationId);
-    saveParking(updated);
-    setReservations(updated);
-    setSelectedId(null);
-    setOpenDelete(false);
-    setError("");
-    setInfo(`Deleted reservation #${selected.reservationId}.`);
+    try {
+      await deleteReservation(selected.reservationId);
+      setSelectedId(null);
+      setOpenDelete(false);
+      await load();
+      setInfo(`Deleted reservation #${selected.reservationId}.`);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to delete reservation.");
+    }
   };
 
   const handleSend = () => {
@@ -338,52 +455,56 @@ export default function ParkingPage() {
   };
 
   // ✅ Sell -> push to Sortie + remove from Parking
-  const handleSell = () => {
+  const handleSell = async () => {
     if (!selected) return;
 
-    const entreeRows = loadEntreeRows();
-    const entreeById = new Map(entreeRows.map((r) => [String(r.id), r]));
+    try {
+      setError("");
+      setInfo("");
 
-    const newSortieRows: SortieRow[] = (selected.items ?? []).map((it) => {
-      const e = entreeById.get(String(it.entreeRowId));
+      const entreeIds = (selected.items ?? [])
+        .map((x) => String(x.entreeRowId ?? "").trim())
+        .filter(Boolean);
 
-      return {
-        id: makeId(),
+      const entreeMap = await fetchEntreeByIds(entreeIds);
 
-        Date_Chg: todayISO(),
-        Dossier: "",
-        Client: selected.client ?? "",
-        Mat_Transport: "",
+      const payload: SortieInsert[] = (selected.items ?? []).map((it) => {
+        const e = entreeMap.get(String(it.entreeRowId));
 
-        Lot: String(e?.Lot ?? it.Lot ?? ""),
-        Date_production: String(e?.Date_production ?? ""),
-        Produit: String(e?.Produit ?? it.Produit ?? ""),
-        Calibre: String(e?.Calibre ?? it.Calibre ?? "nan"),
-        Qualite: String(e?.Qualite ?? it.Qualite ?? "nan"),
+        return {
+          date_chg: todayISO(),
+          dossier: "",
+          client: selected.client ?? "",
+          mat_transport: "",
 
-        "%_Ctrl": (e?.["%_Ctrl"] ?? null) as any,
-        Gr_mn: (e?.Gr_mn ?? null) as any,
-        Gr_mx: (e?.Gr_mx ?? null) as any,
+          lot: String(e?.Lot ?? it.Lot ?? "") || null,
+          date_production: String(e?.Date_production ?? "") || null,
+          produit: String(e?.Produit ?? it.Produit ?? "") || null,
+          calibre: String(e?.Calibre ?? it.Calibre ?? "nan") || null,
+          qualite: String(e?.Qualite ?? it.Qualite ?? "nan") || null,
 
-        Emballage: String(e?.Emballage ?? ""),
-        PU: (e?.PU ?? null) as any,
-        Colis: (e?.Colis ?? null) as any,
-        Quantite: safeNum(it.reservedQty, 0),
-      };
-    });
+          pct_ctrl: (e?.["%_Ctrl"] ?? null) as any,
+          gr_mn: (e?.Gr_mn ?? null) as any,
+          gr_mx: (e?.Gr_mx ?? null) as any,
 
-    const currentSortie = loadSortieRows();
-    saveSortieRows([...newSortieRows, ...currentSortie]);
+          emballage: String(e?.Emballage ?? "") || null,
+          pu: (e?.PU ?? null) as any,
+          colis: (e?.Colis ?? null) as any,
+          quantite: safeNum(it.reservedQty, 0),
+        };
+      });
 
-    const updatedParking = reservations.filter((r) => r.reservationId !== selected.reservationId);
-    saveParking(updatedParking);
-    setReservations(updatedParking);
-    setSelectedId(null);
+      const { error: insErr } = await supabase.from("sortie").insert(payload);
+      if (insErr) throw new Error(insErr.message);
 
-    setError("");
-    setInfo(
-      `Sold reservation #${selected.reservationId}. Moved ${newSortieRows.length} item(s) to Sortie.`
-    );
+      await deleteReservation(selected.reservationId);
+
+      setSelectedId(null);
+      await load();
+      setInfo(`Sold reservation #${selected.reservationId}. Moved ${payload.length} item(s) to Sortie.`);
+    } catch (e: any) {
+      setError(e?.message ?? "Sell failed.");
+    }
   };
 
   const updateItem = (idx: number, patch: Partial<ParkingItem>) => {
@@ -400,23 +521,20 @@ export default function ParkingPage() {
         <Box>
           <Typography variant="h5">Parking</Typography>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Select a reservation to enable actions.
+            Shared database mode (Supabase). Select a reservation to enable actions.
           </Typography>
         </Box>
 
         <Stack direction="row" spacing={1} alignItems="center">
           <Chip variant="outlined" label={`Reservations: ${reservations.length}`} />
-          {selected ? (
-            <Chip color="info" label={`Selected: #${selected.reservationId}`} />
-          ) : (
-            <Chip label="No selection" />
-          )}
+          {selected ? <Chip color="info" label={`Selected: #${selected.reservationId}`} /> : <Chip label="No selection" />}
+          {loading ? <Chip color="info" label="Loading..." /> : <Chip color="success" label="Live" />}
         </Stack>
       </Stack>
 
       <Paper sx={{ p: 1.2, borderRadius: 3 }}>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-          <Button variant="outlined" onClick={refresh}>
+          <Button variant="outlined" onClick={refresh} disabled={loading}>
             Refresh
           </Button>
 
@@ -448,12 +566,13 @@ export default function ParkingPage() {
       <Paper sx={{ p: 1.2, borderRadius: 3 }}>
         <Box sx={{ height: 420, width: "100%" }}>
           <DataGrid
-            rows={rows}
+            rows={gridRows}
             columns={columns}
             getRowId={(r) => r.id}
             disableRowSelectionOnClick={false}
             hideFooterSelectedRowCount
             initialState={{ density: "compact" }}
+            loading={loading}
             onRowClick={(params) => {
               setSelectedId(Number(params.row.reservationId));
               setInfo("");
@@ -517,11 +636,10 @@ export default function ParkingPage() {
         <DialogTitle>Delete reservation</DialogTitle>
         <DialogContent>
           <Typography variant="body2">
-            Are you sure you want to delete reservation{" "}
-            <b>{selected ? `#${selected.reservationId}` : ""}</b>?
+            Are you sure you want to delete reservation <b>{selected ? `#${selected.reservationId}` : ""}</b>?
           </Typography>
           <Typography variant="body2" sx={{ color: "text.secondary", mt: 1 }}>
-            (For now, deleting a reservation does NOT restore quantities back to Entreé. We can add that later.)
+            (Deleting does NOT restore quantities to Entreé yet.)
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
@@ -585,12 +703,7 @@ export default function ParkingPage() {
                   {editItems.map((it, idx) => (
                     <TableRow key={`${it.entreeRowId}-${idx}`}>
                       <TableCell>
-                        <TextField
-                          value={it.Lot}
-                          onChange={(e) => updateItem(idx, { Lot: e.target.value })}
-                          size="small"
-                          fullWidth
-                        />
+                        <TextField value={it.Lot} onChange={(e) => updateItem(idx, { Lot: e.target.value })} size="small" fullWidth />
                       </TableCell>
 
                       <TableCell>
@@ -661,8 +774,7 @@ export default function ParkingPage() {
               </Table>
 
               <Typography variant="body2" sx={{ color: "text.secondary", mt: 1 }}>
-                Note: For now, editing quantities here does not adjust Entreé quantities automatically.
-                We’ll sync this with Entreé later (restore/consume).
+                Note: Editing quantities here does not re-sync Entreé quantities yet.
               </Typography>
             </Paper>
           </Stack>
