@@ -20,7 +20,13 @@ import {
   Typography,
 } from "@mui/material";
 import { DataGrid, GridToolbar, useGridApiRef } from "@mui/x-data-grid";
-import type { GridColDef, GridCellParams, GridFilterModel } from "@mui/x-data-grid";
+import type {
+  GridColDef,
+  GridCellParams,
+  GridFilterModel,
+  GridRowId,
+  GridRowSelectionModel,
+} from "@mui/x-data-grid";
 
 import type { Emballage, Produit, Qualite } from "@lite/shared";
 import { PRODUIT_OPTIONS, QUALITE_OPTIONS, EMBALLAGE_OPTIONS, CALIBRE_BY_PRODUIT } from "@lite/shared";
@@ -77,6 +83,38 @@ function toNumberOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function makeId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+function todayISO() {
+  return dayjs().format("YYYY-MM-DD");
+}
+function stableStringify(obj: unknown) {
+  return JSON.stringify(obj);
+}
+
+function newEmptyRow(): SortieRow {
+  return {
+    id: makeId(),
+    Date_Chg: todayISO(),
+    Dossier: "",
+    Client: "",
+    Mat_Transport: "",
+    Lot: "",
+    Date_production: "",
+    Produit: "",
+    Calibre: "nan",
+    Qualite: "nan",
+    "%_Ctrl": null,
+    Gr_mn: null,
+    Gr_mx: null,
+    Emballage: "",
+    PU: null,
+    Colis: null,
+    Quantite: null,
+  };
+}
+
 function emptyFilterForm(): FilterForm {
   return {
     Date_from: "",
@@ -124,7 +162,7 @@ type SortieDbRow = {
 
 function dbToUi(r: SortieDbRow): SortieRow {
   return {
-    id: r.id,
+    id: String(r.id),
     Date_Chg: r.date_chg ?? "",
     Dossier: r.dossier ?? "",
     Client: r.client ?? "",
@@ -149,6 +187,7 @@ function dbToUi(r: SortieDbRow): SortieRow {
 
 function uiToDb(r: SortieRow) {
   return {
+    id: r.id,
     date_chg: r.Date_Chg || null,
     dossier: r.Dossier || null,
     client: r.Client || null,
@@ -175,6 +214,9 @@ export default function SortiePage() {
   const apiRef = useGridApiRef();
 
   const [rows, setRows] = React.useState<SortieRow[]>([]);
+  const [lastSavedRows, setLastSavedRows] = React.useState<SortieRow[]>([]);
+  const [deletedIds, setDeletedIds] = React.useState<Set<string>>(new Set());
+
   const [loading, setLoading] = React.useState(true);
 
   const [filterModel, setFilterModel] = React.useState<GridFilterModel>({ items: [] });
@@ -182,29 +224,56 @@ export default function SortiePage() {
   const [info, setInfo] = React.useState<string>("");
   const [errorMessages, setErrorMessages] = React.useState<string[]>([]);
 
-  // Filter dialog
+  // selection (for delete)
+  const [selectedRowIds, setSelectedRowIds] = React.useState<GridRowSelectionModel>({
+    type: "include",
+    ids: new Set<GridRowId>(),
+  });
+
+  const selectedIdsArray = React.useMemo(() => Array.from(selectedRowIds.ids ?? []), [selectedRowIds]);
+
+  // dialogs
   const [openFilter, setOpenFilter] = React.useState(false);
   const [filterForm, setFilterForm] = React.useState<FilterForm>(() => emptyFilterForm());
+
+  const [openNew, setOpenNew] = React.useState(false);
+  const [draft, setDraft] = React.useState<SortieRow>(() => newEmptyRow());
+
+  const [openDeleteRows, setOpenDeleteRows] = React.useState(false);
+
+  const hasUnsavedChanges = React.useMemo(() => {
+    if (deletedIds.size) return true;
+    return stableStringify(rows) !== stableStringify(lastSavedRows);
+  }, [rows, lastSavedRows, deletedIds]);
 
   const fetchRows = React.useCallback(async () => {
     setLoading(true);
     setInfo("");
     setErrorMessages([]);
+    try {
+      const { data, error } = await supabase
+        .from("sortie")
+        .select(
+          "id, date_chg, dossier, client, mat_transport, lot, date_production, produit, calibre, qualite, pct_ctrl, gr_mn, gr_mx, emballage, pu, colis, quantite"
+        )
+        .order("created_at", { ascending: false });
 
-    const { data, error } = await supabase
-      .from("sortie")
-      .select("*")
-      .order("created_at", { ascending: false });
+      if (error) throw new Error(error.message);
 
-    if (error) {
-      setErrorMessages([error.message]);
+      const ui = (data as SortieDbRow[]).map(dbToUi);
+      const finalRows = ui.length ? ui : [newEmptyRow()]; // show an empty grid row if DB empty
+      setRows(finalRows);
+      setLastSavedRows(finalRows);
+      setDeletedIds(new Set());
+    } catch (e: any) {
+      setErrorMessages([e?.message ?? "Failed to load Sortie"]);
+      const fallback = [newEmptyRow()];
+      setRows(fallback);
+      setLastSavedRows(fallback);
+      setDeletedIds(new Set());
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const ui = (data as SortieDbRow[]).map(dbToUi);
-    setRows(ui);
-    setLoading(false);
   }, []);
 
   React.useEffect(() => {
@@ -248,7 +317,7 @@ export default function SortiePage() {
       },
       {
         field: "Calibre",
-        headerName: "Caliber",
+        headerName: "Calibre",
         width: 140,
         editable: true,
         type: "singleSelect",
@@ -260,7 +329,7 @@ export default function SortiePage() {
       },
       {
         field: "Qualite",
-        headerName: "Qualité",
+        headerName: "Qualite",
         width: 110,
         editable: true,
         type: "singleSelect",
@@ -268,11 +337,11 @@ export default function SortiePage() {
       },
 
       {
-        ...numericCol("%_Ctrl", "%Ctrl", 95),
+        ...numericCol("%_Ctrl", "% Ctrl", 95),
         valueFormatter: (value) => (value == null || value === "" ? "" : `${value}%`),
       },
-      numericCol("Gr_mn", "Gr Mn", 95),
-      numericCol("Gr_mx", "Gr Mx", 95),
+      numericCol("Gr_mn", "Gr mn", 95),
+      numericCol("Gr_mx", "Gr mx", 95),
       {
         field: "Emballage",
         headerName: "Emballage",
@@ -281,17 +350,107 @@ export default function SortiePage() {
         type: "singleSelect",
         valueOptions: EMBALLAGE_OPTIONS,
       },
-      numericCol("PU", "Pu", 90),
+      numericCol("PU", "PU", 90),
       numericCol("Colis", "Colis", 90),
       numericCol("Quantite", "Quantite", 110),
     ];
   }, []);
 
   // =========================
-  // Filter dialog -> converts to filterModel
+  // New Entry dialog
   // =========================
-  const hasAnyMultiFilter = (f: FilterForm) =>
-    Object.values(f).some((v) => String(v ?? "").trim() !== "");
+  const openNewEntry = () => {
+    setInfo("");
+    setErrorMessages([]);
+    setDraft(newEmptyRow());
+    setOpenNew(true);
+  };
+
+  const saveNewEntry = () => {
+    const row: SortieRow = {
+      ...draft,
+      id: makeId(),
+      Calibre: draft.Calibre?.trim() ? draft.Calibre : "nan",
+      Date_Chg: draft.Date_Chg?.trim() ? draft.Date_Chg : todayISO(),
+    };
+    setRows((prev) => [row, ...prev]);
+    setOpenNew(false);
+    setInfo("New entry added to grid (not saved yet).");
+  };
+
+  // =========================
+  // Save / Cancel (DB)
+  // =========================
+  const handleSave = async () => {
+    try {
+      setInfo("");
+      setErrorMessages([]);
+
+      if (deletedIds.size) {
+        const ids = Array.from(deletedIds);
+        const { error: delErr } = await supabase.from("sortie").delete().in("id", ids);
+        if (delErr) throw new Error(delErr.message);
+      }
+
+      const payload = rows.map((r) => uiToDb(r));
+      const { error: upErr } = await supabase.from("sortie").upsert(payload, { onConflict: "id" });
+      if (upErr) throw new Error(upErr.message);
+
+      setDeletedIds(new Set());
+      setLastSavedRows(rows);
+      setInfo("Saved to database.");
+    } catch (e: any) {
+      setErrorMessages([e?.message ?? "Save failed."]);
+    }
+  };
+
+  const handleCancel = () => {
+    setRows(lastSavedRows);
+    setDeletedIds(new Set());
+    setInfo("Restored last saved snapshot.");
+    setErrorMessages([]);
+  };
+
+  const handleRefresh = async () => {
+    await fetchRows();
+    setInfo("Refreshed from database.");
+  };
+
+  // =========================
+  // Delete selected rows
+  // =========================
+  const openDeleteSelected = () => {
+    if (!selectedIdsArray.length) {
+      setErrorMessages(["Select at least one row (checkbox) to delete."]);
+      return;
+    }
+    setErrorMessages([]);
+    setInfo("");
+    setOpenDeleteRows(true);
+  };
+
+  const confirmDeleteSelected = () => {
+    const idsToDelete = new Set(selectedIdsArray.map(String));
+
+    setDeletedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of idsToDelete) next.add(String(id));
+      return next;
+    });
+
+    const updated = rows.filter((r) => !idsToDelete.has(String(r.id)));
+    const finalRows = updated.length ? updated : [newEmptyRow()];
+
+    setRows(finalRows);
+    setSelectedRowIds({ type: "include", ids: new Set() } as any);
+    setOpenDeleteRows(false);
+    setInfo(`Deleted ${selectedIdsArray.length} row(s) (not saved yet).`);
+  };
+
+  // =========================
+  // Filter dialog
+  // =========================
+  const hasAnyMultiFilter = (f: FilterForm) => Object.values(f).some((v) => String(v ?? "").trim() !== "");
 
   const buildFilterModelFromForm = (f: FilterForm): GridFilterModel => {
     const items: any[] = [];
@@ -301,15 +460,12 @@ export default function SortiePage() {
 
     if (f.Dossier.trim()) items.push({ field: "Dossier", operator: "contains", value: f.Dossier.trim() });
     if (f.Client.trim()) items.push({ field: "Client", operator: "contains", value: f.Client.trim() });
-    if (f.Mat_Transport.trim())
-      items.push({ field: "Mat_Transport", operator: "contains", value: f.Mat_Transport.trim() });
+    if (f.Mat_Transport.trim()) items.push({ field: "Mat_Transport", operator: "contains", value: f.Mat_Transport.trim() });
 
     if (f.Lot.trim()) items.push({ field: "Lot", operator: "contains", value: f.Lot.trim() });
 
-    if (f.DateProd_from.trim())
-      items.push({ field: "Date_production", operator: ">=", value: f.DateProd_from.trim() });
-    if (f.DateProd_to.trim())
-      items.push({ field: "Date_production", operator: "<=", value: f.DateProd_to.trim() });
+    if (f.DateProd_from.trim()) items.push({ field: "Date_production", operator: ">=", value: f.DateProd_from.trim() });
+    if (f.DateProd_to.trim()) items.push({ field: "Date_production", operator: "<=", value: f.DateProd_to.trim() });
 
     if (f.Produit.trim()) items.push({ field: "Produit", operator: "equals", value: f.Produit.trim() });
     if (f.Calibre.trim()) items.push({ field: "Calibre", operator: "contains", value: f.Calibre.trim() });
@@ -342,24 +498,6 @@ export default function SortiePage() {
     setInfo("Filter cleared.");
   };
 
-  // =========================
-  // DB persistence (auto-save)
-  // =========================
-  const persistRow = async (row: SortieRow) => {
-    const payload = uiToDb(row);
-
-    const { error } = await supabase.from("sortie").update(payload).eq("id", row.id);
-    if (error) {
-      setErrorMessages([error.message]);
-      throw error;
-    }
-  };
-
-  const handleRefresh = async () => {
-    await fetchRows();
-    setInfo("Refreshed from database.");
-  };
-
   const FilterRow = ({ children }: { children: React.ReactNode }) => (
     <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 2 }}>
       {children}
@@ -377,6 +515,7 @@ export default function SortiePage() {
         </Box>
 
         <Stack direction="row" spacing={1} alignItems="center">
+          {hasUnsavedChanges ? <Chip color="warning" label="Unsaved changes" /> : <Chip color="success" label="Saved" />}
           <Chip variant="outlined" label={`Rows: ${rows.length}`} />
           {loading ? <Chip color="info" label="Loading..." /> : <Chip color="success" label="Live" />}
         </Stack>
@@ -390,18 +529,30 @@ export default function SortiePage() {
 
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
 
+          <Button variant="contained" onClick={openNewEntry} disabled={loading}>
+            New Entry
+          </Button>
+
+          <Button variant="outlined" onClick={handleSave} disabled={loading || !hasUnsavedChanges}>
+            Save
+          </Button>
+
+          <Button variant="text" onClick={handleCancel} disabled={loading}>
+            Cancel
+          </Button>
+
+          <Button variant="outlined" color="error" onClick={openDeleteSelected} disabled={loading}>
+            Delete Row(s)
+          </Button>
+
+          <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
+
           <Button variant="outlined" onClick={openFilterDialog}>
             Filter
           </Button>
           <Button variant="text" onClick={clearFilter}>
             Clear Filter
           </Button>
-
-          <Box sx={{ flexGrow: 1 }} />
-
-          <Typography variant="caption" sx={{ color: "text.secondary" }}>
-            Changes are saved automatically.
-          </Typography>
         </Stack>
       </Paper>
 
@@ -427,34 +578,47 @@ export default function SortiePage() {
             loading={loading}
             initialState={{ density: "compact" }}
             editMode="cell"
+            checkboxSelection
             disableRowSelectionOnClick
+            rowSelectionModel={selectedRowIds}
+            onRowSelectionModelChange={(m) => setSelectedRowIds(m as any)}
             filterModel={filterModel}
             onFilterModelChange={(m) => setFilterModel(m)}
             slots={{ toolbar: GridToolbar }}
             slotProps={{ toolbar: { showQuickFilter: false } as any }}
             onCellClick={handleCellClick}
-            processRowUpdate={async (newRow: SortieRow) => {
+            processRowUpdate={(newRow: SortieRow) => {
               const cleaned: SortieRow = {
                 ...newRow,
                 Calibre: newRow.Calibre?.trim() ? newRow.Calibre : "nan",
-                Date_Chg: newRow.Date_Chg?.trim()
-                  ? newRow.Date_Chg
-                  : dayjs().format("YYYY-MM-DD"),
+                Date_Chg: newRow.Date_Chg?.trim() ? newRow.Date_Chg : todayISO(),
               };
-
-              // optimistic UI
               setRows((prev) => prev.map((r) => (r.id === cleaned.id ? cleaned : r)));
-
-              // persist to DB
-              await persistRow(cleaned);
-
-              setInfo("Saved.");
               return cleaned;
             }}
             isCellEditable={() => true}
           />
         </Box>
       </Paper>
+
+      {/* DELETE dialog */}
+      <Dialog open={openDeleteRows} onClose={() => setOpenDeleteRows(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Delete selected rows</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            Are you sure you want to delete <b>{selectedIdsArray.length}</b> row(s)?
+          </Typography>
+          <Typography variant="body2" sx={{ color: "text.secondary", mt: 1 }}>
+            This will remove them from the grid. Click <b>Save</b> to persist to DB.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setOpenDeleteRows(false)}>Cancel</Button>
+          <Button variant="contained" color="error" onClick={confirmDeleteSelected}>
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* FILTER dialog */}
       <Dialog open={openFilter} onClose={() => setOpenFilter(false)} maxWidth="lg" fullWidth>
@@ -548,9 +712,9 @@ export default function SortiePage() {
               fullWidth
             />
             <FormControl fullWidth>
-              <InputLabel>Qualité</InputLabel>
+              <InputLabel>Qualite</InputLabel>
               <Select
-                label="Qualité"
+                label="Qualite"
                 value={filterForm.Qualite}
                 onChange={(e) => setFilterForm((p) => ({ ...p, Qualite: String(e.target.value) }))}
               >
@@ -562,6 +726,7 @@ export default function SortiePage() {
                 ))}
               </Select>
             </FormControl>
+
             <FormControl fullWidth>
               <InputLabel>Emballage</InputLabel>
               <Select
@@ -602,6 +767,106 @@ export default function SortiePage() {
           <Button onClick={() => setFilterForm(emptyFilterForm())}>Reset</Button>
           <Button variant="contained" onClick={applyFilter}>
             Apply
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* NEW ENTRY dialog */}
+      <Dialog open={openNew} onClose={() => setOpenNew(false)} maxWidth="md" fullWidth>
+        <DialogTitle>New Sortie Entry</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+              <TextField
+                label="Date Chg"
+                type="date"
+                value={draft.Date_Chg}
+                onChange={(e) => setDraft((p) => ({ ...p, Date_Chg: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+              />
+              <TextField label="Dossier" value={draft.Dossier} onChange={(e) => setDraft((p) => ({ ...p, Dossier: e.target.value }))} fullWidth />
+              <TextField label="Client" value={draft.Client} onChange={(e) => setDraft((p) => ({ ...p, Client: e.target.value }))} fullWidth />
+              <TextField
+                label="Mat Transport"
+                value={draft.Mat_Transport}
+                onChange={(e) => setDraft((p) => ({ ...p, Mat_Transport: e.target.value }))}
+                fullWidth
+              />
+            </Stack>
+
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+              <TextField label="Lot" value={draft.Lot} onChange={(e) => setDraft((p) => ({ ...p, Lot: e.target.value }))} fullWidth />
+              <TextField
+                label="Date Production"
+                type="date"
+                value={draft.Date_production}
+                onChange={(e) => setDraft((p) => ({ ...p, Date_production: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+              />
+              <FormControl fullWidth>
+                <InputLabel>Produit</InputLabel>
+                <Select label="Produit" value={draft.Produit} onChange={(e) => setDraft((p) => ({ ...p, Produit: e.target.value as any }))}>
+                  <MenuItem value="">(empty)</MenuItem>
+                  {PRODUIT_OPTIONS.map((o) => (
+                    <MenuItem key={o} value={o}>
+                      {o}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControl fullWidth>
+                <InputLabel>Calibre</InputLabel>
+                <Select label="Calibre" value={draft.Calibre} onChange={(e) => setDraft((p) => ({ ...p, Calibre: e.target.value as string }))}>
+                  <MenuItem value="nan">nan</MenuItem>
+                  {draft.Produit ? CALIBRE_BY_PRODUIT[draft.Produit].map((o) => <MenuItem key={o} value={o}>{o}</MenuItem>) : null}
+                </Select>
+              </FormControl>
+
+              <FormControl fullWidth>
+                <InputLabel>Qualite</InputLabel>
+                <Select label="Qualite" value={draft.Qualite} onChange={(e) => setDraft((p) => ({ ...p, Qualite: e.target.value as any }))}>
+                  {QUALITE_OPTIONS.map((o) => (
+                    <MenuItem key={o} value={o}>
+                      {o}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Stack>
+
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+              <TextField label="% Ctrl" value={draft["%_Ctrl"] ?? ""} onChange={(e) => setDraft((p) => ({ ...p, "%_Ctrl": toNumberOrNull(e.target.value) }))} fullWidth />
+              <TextField label="Gr mn" value={draft.Gr_mn ?? ""} onChange={(e) => setDraft((p) => ({ ...p, Gr_mn: toNumberOrNull(e.target.value) }))} fullWidth />
+              <TextField label="Gr mx" value={draft.Gr_mx ?? ""} onChange={(e) => setDraft((p) => ({ ...p, Gr_mx: toNumberOrNull(e.target.value) }))} fullWidth />
+            </Stack>
+
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+              <FormControl fullWidth>
+                <InputLabel>Emballage</InputLabel>
+                <Select label="Emballage" value={draft.Emballage} onChange={(e) => setDraft((p) => ({ ...p, Emballage: e.target.value as any }))}>
+                  <MenuItem value="">(empty)</MenuItem>
+                  {EMBALLAGE_OPTIONS.map((o) => (
+                    <MenuItem key={o} value={o}>
+                      {o}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <TextField label="PU" value={draft.PU ?? ""} onChange={(e) => setDraft((p) => ({ ...p, PU: toNumberOrNull(e.target.value) }))} fullWidth />
+              <TextField label="Colis" value={draft.Colis ?? ""} onChange={(e) => setDraft((p) => ({ ...p, Colis: toNumberOrNull(e.target.value) }))} fullWidth />
+              <TextField label="Quantite" value={draft.Quantite ?? ""} onChange={(e) => setDraft((p) => ({ ...p, Quantite: toNumberOrNull(e.target.value) }))} fullWidth />
+            </Stack>
+          </Stack>
+        </DialogContent>
+
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setOpenNew(false)}>Cancel</Button>
+          <Button variant="contained" onClick={saveNewEntry}>
+            Save Entry
           </Button>
         </DialogActions>
       </Dialog>

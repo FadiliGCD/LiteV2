@@ -80,9 +80,9 @@ export default function LoginPage() {
               color: "white",
             }}
           >
-            <Typography variant="h6">AFB Global Portal</Typography>
+            <Typography variant="h6">KATASAB Fish Portail</Typography>
             <Typography variant="body2" sx={{ opacity: 0.85 }}>
-              Secure Access • Authorized Personnel Only
+              Authorized Personnel Only
             </Typography>
           </Box>
 
@@ -91,7 +91,7 @@ export default function LoginPage() {
               Sign in
             </Typography>
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
-              Use your email + password (Supabase Auth).
+              Use your email + password.
             </Typography>
 
             <Divider />
@@ -126,19 +126,11 @@ export default function LoginPage() {
                 {loading ? "Please wait..." : "Login"}
               </Button>
 
-              <Button
-                variant="outlined"
-                size="large"
-                onClick={onSignUp}
-                disabled={loading}
-                fullWidth
-              >
-                Create Account
-              </Button>
+              
             </Stack>
 
             <Typography variant="caption" sx={{ color: "text.secondary" }}>
-              Admin access is controlled by the <b>profiles.role</b> value in Supabase.
+              In case you forget your password, please contact the administrator to reset it for you.
             </Typography>
           </Stack>
         </Paper>

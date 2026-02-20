@@ -50,7 +50,7 @@ type ParkingReservation = {
   items: ParkingItem[];
 };
 
-// minimal Entree row type (only fields we need when selling)
+// minimal Entree row type (only fields we need when selling + stock sync)
 type EntreeRow = {
   id: string;
   Lot?: string;
@@ -114,12 +114,25 @@ function safeNum(v: unknown, fallback = 0) {
 function todayISO() {
   return dayjs().format("YYYY-MM-DD");
 }
+function normalizeEntreeId(id: unknown) {
+  const s = String(id ?? "").trim();
+  return s;
+}
+function groupSumByEntreeId(items: ParkingItem[]) {
+  const m = new Map<string, number>();
+  for (const it of items) {
+    const id = normalizeEntreeId(it.entreeRowId);
+    if (!id) continue;
+    const prev = m.get(id) ?? 0;
+    m.set(id, prev + safeNum(it.reservedQty, 0));
+  }
+  return m;
+}
 
 // -----------------------------
 // Supabase helpers
 // -----------------------------
 async function fetchParking(): Promise<ParkingReservation[]> {
-  // Get reservations
   const { data: res, error: resErr } = await supabase
     .from("parking_reservations")
     .select("reservation_id, client, created_at")
@@ -130,7 +143,6 @@ async function fetchParking(): Promise<ParkingReservation[]> {
   const reservationIds = (res ?? []).map((r: any) => Number(r.reservation_id));
   if (!reservationIds.length) return [];
 
-  // Get items for all reservations
   const { data: items, error: itemsErr } = await supabase
     .from("parking_items")
     .select("id, reservation_id, entree_id, lot, code_prp, produit, calibre, qualite, reserved_qty")
@@ -175,20 +187,16 @@ async function reservationIdExists(reservationId: number) {
 }
 
 async function updateReservationId(oldId: number, newId: number) {
-  // Update reservation row
   const { error: u1 } = await supabase
     .from("parking_reservations")
     .update({ reservation_id: newId })
     .eq("reservation_id", oldId);
-
   if (u1) throw new Error(u1.message);
 
-  // Update items FK
   const { error: u2 } = await supabase
     .from("parking_items")
     .update({ reservation_id: newId })
     .eq("reservation_id", oldId);
-
   if (u2) throw new Error(u2.message);
 }
 
@@ -197,23 +205,19 @@ async function updateReservationClient(reservationId: number, client: string) {
     .from("parking_reservations")
     .update({ client })
     .eq("reservation_id", reservationId);
-
   if (error) throw new Error(error.message);
 }
 
 async function replaceReservationItems(reservationId: number, items: ParkingItem[]) {
-  // Delete old
   const { error: delErr } = await supabase
     .from("parking_items")
     .delete()
     .eq("reservation_id", reservationId);
-
   if (delErr) throw new Error(delErr.message);
 
-  // Insert new
   const payload = items.map((it) => ({
     reservation_id: reservationId,
-    entree_id: it.entreeRowId || null,
+    entree_id: normalizeEntreeId(it.entreeRowId) || null,
     lot: it.Lot || null,
     code_prp: it.Code_Prp || null,
     produit: it.Produit || null,
@@ -227,19 +231,19 @@ async function replaceReservationItems(reservationId: number, items: ParkingItem
 }
 
 async function deleteReservation(reservationId: number) {
-  // items will cascade if FK is set with on delete cascade, but we handle safely anyway
   await supabase.from("parking_items").delete().eq("reservation_id", reservationId);
   const { error } = await supabase.from("parking_reservations").delete().eq("reservation_id", reservationId);
   if (error) throw new Error(error.message);
 }
 
 async function fetchEntreeByIds(ids: string[]): Promise<Map<string, EntreeRow>> {
-  if (!ids.length) return new Map();
+  const clean = Array.from(new Set(ids.map((x) => String(x).trim()).filter(Boolean)));
+  if (!clean.length) return new Map();
 
   const { data, error } = await supabase
     .from("entree")
     .select("id, lot, code_prp, date_production, produit, calibre, qualite, pct_ctrl, gr_mn, gr_mx, emballage, pu, colis, quantite")
-    .in("id", ids);
+    .in("id", clean);
 
   if (error) throw new Error(error.message);
 
@@ -263,6 +267,37 @@ async function fetchEntreeByIds(ids: string[]): Promise<Map<string, EntreeRow>> 
     });
   }
   return m;
+}
+
+async function applyEntreeQuantiteDeltas(deltas: Map<string, number>) {
+  // delta meaning:
+  //   +X => we need to RESERVE more => subtract X from entree.quantite
+  //   -X => we RELEASE => add |X| back to entree.quantite
+  const ids = Array.from(deltas.keys());
+  if (!ids.length) return;
+
+  const entreeMap = await fetchEntreeByIds(ids);
+
+  // validate stock
+  for (const [id, delta] of deltas.entries()) {
+    if (delta <= 0) continue; // only increasing reservation needs validation
+    const current = safeNum(entreeMap.get(id)?.Quantite, 0);
+    if (current < delta) {
+      throw new Error(`Not enough stock in Entree for row ${id}. Needed +${delta}, available ${current}.`);
+    }
+  }
+
+  // apply updates
+  const updates = [];
+  for (const [id, delta] of deltas.entries()) {
+    const row = entreeMap.get(id);
+    const current = safeNum(row?.Quantite, 0);
+    const next = current - delta; // because delta + means reserve more (subtract); delta - means subtract(-) => add back
+    updates.push({ id, quantite: Math.max(0, next) });
+  }
+
+  const { error } = await supabase.from("entree").upsert(updates, { onConflict: "id" });
+  if (error) throw new Error(error.message);
 }
 
 // -----------------------------
@@ -352,6 +387,7 @@ export default function ParkingPage() {
     setEditItems(
       (selected.items ?? []).map((it) => ({
         ...it,
+        entreeRowId: String(it.entreeRowId ?? ""),
         Lot: String(it.Lot ?? ""),
         Code_Prp: String(it.Code_Prp ?? ""),
         Produit: String(it.Produit ?? ""),
@@ -396,7 +432,38 @@ export default function ParkingPage() {
       const newId = Number(editReservationId);
       const oldId = selected.reservationId;
 
-      // If changing ID: ensure uniqueness
+      // Clean items first
+      const cleanedItems: ParkingItem[] = editItems.map((it) => ({
+        entreeRowId: normalizeEntreeId(it.entreeRowId),
+        Lot: String(it.Lot ?? ""),
+        Code_Prp: String(it.Code_Prp ?? ""),
+        Produit: String(it.Produit ?? ""),
+        Calibre: String(it.Calibre ?? ""),
+        Qualite: String(it.Qualite ?? ""),
+        reservedQty: safeNum(it.reservedQty, 0),
+      }));
+
+      // ---- STOCK SYNC (Entree.quantite) ----
+      // compare previous selected.items vs cleanedItems
+      const before = groupSumByEntreeId(selected.items ?? []);
+      const after = groupSumByEntreeId(cleanedItems);
+
+      // delta = after - before (per entree_id)
+      const deltas = new Map<string, number>();
+      const keys = new Set<string>([...before.keys(), ...after.keys()]);
+      for (const id of keys) {
+        const b = before.get(id) ?? 0;
+        const a = after.get(id) ?? 0;
+        const delta = a - b;
+        if (delta !== 0) deltas.set(id, delta);
+      }
+
+      // apply deltas to entree (may throw if insufficient stock)
+      // delta + means reserve more => subtract from entree
+      // delta - means release => add back
+      await applyEntreeQuantiteDeltas(deltas);
+
+      // ---- Update reservation + items ----
       if (newId !== oldId) {
         const exists = await reservationIdExists(newId);
         if (exists) {
@@ -407,23 +474,12 @@ export default function ParkingPage() {
       }
 
       await updateReservationClient(newId, editClient);
-
-      const cleanedItems: ParkingItem[] = editItems.map((it) => ({
-        entreeRowId: String(it.entreeRowId ?? ""),
-        Lot: String(it.Lot ?? ""),
-        Code_Prp: String(it.Code_Prp ?? ""),
-        Produit: String(it.Produit ?? ""),
-        Calibre: String(it.Calibre ?? ""),
-        Qualite: String(it.Qualite ?? ""),
-        reservedQty: safeNum(it.reservedQty, 0),
-      }));
-
       await replaceReservationItems(newId, cleanedItems);
 
       setOpenModify(false);
       setSelectedId(newId);
       await load();
-      setInfo(`Reservation updated (#${newId}).`);
+      setInfo(`Reservation updated (#${newId}). Entree quantities synced.`);
     } catch (e: any) {
       setError(e?.message ?? "Failed to update reservation.");
     }
@@ -438,11 +494,24 @@ export default function ParkingPage() {
   const confirmDelete = async () => {
     if (!selected) return;
     try {
+      setError("");
+      setInfo("");
+
+      // Restore quantities back to Entree when deleting reservation
+      const before = groupSumByEntreeId(selected.items ?? []);
+      // deleting means after = 0 => delta = 0 - before = -before (release)
+      const deltas = new Map<string, number>();
+      for (const [id, qty] of before.entries()) {
+        if (qty !== 0) deltas.set(id, -qty);
+      }
+      await applyEntreeQuantiteDeltas(deltas);
+
       await deleteReservation(selected.reservationId);
+
       setSelectedId(null);
       setOpenDelete(false);
       await load();
-      setInfo(`Deleted reservation #${selected.reservationId}.`);
+      setInfo(`Deleted reservation #${selected.reservationId}. Entree quantities restored.`);
     } catch (e: any) {
       setError(e?.message ?? "Failed to delete reservation.");
     }
@@ -455,6 +524,7 @@ export default function ParkingPage() {
   };
 
   // ✅ Sell -> push to Sortie + remove from Parking
+  // Note: Sell does NOT touch Entree.quantite here because it was already deducted at Park/Modify time.
   const handleSell = async () => {
     if (!selected) return;
 
@@ -639,7 +709,7 @@ export default function ParkingPage() {
             Are you sure you want to delete reservation <b>{selected ? `#${selected.reservationId}` : ""}</b>?
           </Typography>
           <Typography variant="body2" sx={{ color: "text.secondary", mt: 1 }}>
-            (Deleting does NOT restore quantities to Entreé yet.)
+            This will RESTORE quantities back to Entreé.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
@@ -774,7 +844,7 @@ export default function ParkingPage() {
               </Table>
 
               <Typography variant="body2" sx={{ color: "text.secondary", mt: 1 }}>
-                Note: Editing quantities here does not re-sync Entreé quantities yet.
+                Note: Modify now syncs Entreé quantities (reserve more / release back).
               </Typography>
             </Paper>
           </Stack>
