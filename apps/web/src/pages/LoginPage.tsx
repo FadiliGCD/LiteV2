@@ -1,17 +1,8 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  Alert,
-  Box,
-  Button,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-  Divider,
-} from "@mui/material";
+import { Alert, Box, Button, Paper, Stack, TextField, Typography, Divider } from "@mui/material";
 import AppFooter from "../components/AppFooter";
-import { signInWithEmail, signUpWithEmail } from "../auth/auth";
+import { signInWithEmail } from "../auth/auth";
 
 export default function LoginPage() {
   const nav = useNavigate();
@@ -32,22 +23,6 @@ export default function LoginPage() {
       nav("/", { replace: true });
     } catch (e: any) {
       setError(e?.message ?? "Login failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onSignUp = async () => {
-    setError("");
-    setInfo("");
-    setLoading(true);
-    try {
-      await signUpWithEmail(email.trim(), password);
-      setInfo(
-        "Account created. If email confirmation is enabled, check your inbox. Otherwise you can sign in now."
-      );
-    } catch (e: any) {
-      setError(e?.message ?? "Sign up failed");
     } finally {
       setLoading(false);
     }
@@ -125,8 +100,6 @@ export default function LoginPage() {
               >
                 {loading ? "Please wait..." : "Login"}
               </Button>
-
-              
             </Stack>
 
             <Typography variant="caption" sx={{ color: "text.secondary" }}>
