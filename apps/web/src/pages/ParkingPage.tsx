@@ -115,8 +115,7 @@ function todayISO() {
   return dayjs().format("YYYY-MM-DD");
 }
 function normalizeEntreeId(id: unknown) {
-  const s = String(id ?? "").trim();
-  return s;
+  return String(id ?? "").trim();
 }
 function groupSumByEntreeId(items: ParkingItem[]) {
   const m = new Map<string, number>();
@@ -232,7 +231,10 @@ async function replaceReservationItems(reservationId: number, items: ParkingItem
 
 async function deleteReservation(reservationId: number) {
   await supabase.from("parking_items").delete().eq("reservation_id", reservationId);
-  const { error } = await supabase.from("parking_reservations").delete().eq("reservation_id", reservationId);
+  const { error } = await supabase
+    .from("parking_reservations")
+    .delete()
+    .eq("reservation_id", reservationId);
   if (error) throw new Error(error.message);
 }
 
@@ -270,29 +272,24 @@ async function fetchEntreeByIds(ids: string[]): Promise<Map<string, EntreeRow>> 
 }
 
 async function applyEntreeQuantiteDeltas(deltas: Map<string, number>) {
-  // delta meaning:
-  //   +X => we need to RESERVE more => subtract X from entree.quantite
-  //   -X => we RELEASE => add |X| back to entree.quantite
   const ids = Array.from(deltas.keys());
   if (!ids.length) return;
 
   const entreeMap = await fetchEntreeByIds(ids);
 
-  // validate stock
   for (const [id, delta] of deltas.entries()) {
-    if (delta <= 0) continue; // only increasing reservation needs validation
+    if (delta <= 0) continue;
     const current = safeNum(entreeMap.get(id)?.Quantite, 0);
     if (current < delta) {
       throw new Error(`Not enough stock in Entree for row ${id}. Needed +${delta}, available ${current}.`);
     }
   }
 
-  // apply updates
   const updates = [];
   for (const [id, delta] of deltas.entries()) {
     const row = entreeMap.get(id);
     const current = safeNum(row?.Quantite, 0);
-    const next = current - delta; // because delta + means reserve more (subtract); delta - means subtract(-) => add back
+    const next = current - delta;
     updates.push({ id, quantite: Math.max(0, next) });
   }
 
@@ -320,6 +317,10 @@ export default function ParkingPage() {
   const [editClient, setEditClient] = React.useState<string>("");
   const [editItems, setEditItems] = React.useState<ParkingItem[]>([]);
 
+  // SELL dialog (partial sell)
+  const [openSell, setOpenSell] = React.useState(false);
+  const [sellItems, setSellItems] = React.useState<Array<{ item: ParkingItem; sellQty: number }>>([]);
+
   const selected = React.useMemo(
     () => reservations.find((r) => r.reservationId === selectedId) ?? null,
     [reservations, selectedId]
@@ -342,7 +343,6 @@ export default function ParkingPage() {
     load();
   }, [load]);
 
-  // keep selection valid after changes
   React.useEffect(() => {
     if (selectedId == null) return;
     const exists = reservations.some((r) => r.reservationId === selectedId);
@@ -432,7 +432,6 @@ export default function ParkingPage() {
       const newId = Number(editReservationId);
       const oldId = selected.reservationId;
 
-      // Clean items first
       const cleanedItems: ParkingItem[] = editItems.map((it) => ({
         entreeRowId: normalizeEntreeId(it.entreeRowId),
         Lot: String(it.Lot ?? ""),
@@ -443,12 +442,9 @@ export default function ParkingPage() {
         reservedQty: safeNum(it.reservedQty, 0),
       }));
 
-      // ---- STOCK SYNC (Entree.quantite) ----
-      // compare previous selected.items vs cleanedItems
       const before = groupSumByEntreeId(selected.items ?? []);
       const after = groupSumByEntreeId(cleanedItems);
 
-      // delta = after - before (per entree_id)
       const deltas = new Map<string, number>();
       const keys = new Set<string>([...before.keys(), ...after.keys()]);
       for (const id of keys) {
@@ -458,12 +454,8 @@ export default function ParkingPage() {
         if (delta !== 0) deltas.set(id, delta);
       }
 
-      // apply deltas to entree (may throw if insufficient stock)
-      // delta + means reserve more => subtract from entree
-      // delta - means release => add back
       await applyEntreeQuantiteDeltas(deltas);
 
-      // ---- Update reservation + items ----
       if (newId !== oldId) {
         const exists = await reservationIdExists(newId);
         if (exists) {
@@ -497,9 +489,7 @@ export default function ParkingPage() {
       setError("");
       setInfo("");
 
-      // Restore quantities back to Entree when deleting reservation
       const before = groupSumByEntreeId(selected.items ?? []);
-      // deleting means after = 0 => delta = 0 - before = -before (release)
       const deltas = new Map<string, number>();
       for (const [id, qty] of before.entries()) {
         if (qty !== 0) deltas.set(id, -qty);
@@ -523,60 +513,151 @@ export default function ParkingPage() {
     setInfo("Send: will be implemented later (printable Word/PDF step).");
   };
 
-  // ✅ Sell -> push to Sortie + remove from Parking
-  // Note: Sell does NOT touch Entree.quantite here because it was already deducted at Park/Modify time.
-  const handleSell = async () => {
+  // -----------------------------
+  // SELL (partial) dialog logic
+  // -----------------------------
+  const openSellDialog = () => {
+    if (!selected) return;
+    setError("");
+    setInfo("");
+    const prepared = (selected.items ?? []).map((it) => ({
+      item: it,
+      sellQty: safeNum(it.reservedQty, 0), // default = sell all
+    }));
+    setSellItems(prepared);
+    setOpenSell(true);
+  };
+
+  const setSellAll = () => {
+    setSellItems((prev) =>
+      prev.map((x) => ({
+        ...x,
+        sellQty: safeNum(x.item.reservedQty, 0),
+      }))
+    );
+  };
+
+  const setSellNone = () => {
+    setSellItems((prev) =>
+      prev.map((x) => ({
+        ...x,
+        sellQty: 0,
+      }))
+    );
+  };
+
+  const confirmSell = async () => {
     if (!selected) return;
 
     try {
       setError("");
       setInfo("");
 
-      const entreeIds = (selected.items ?? [])
-        .map((x) => String(x.entreeRowId ?? "").trim())
+      // Validate
+      for (const x of sellItems) {
+        const max = safeNum(x.item.reservedQty, 0);
+        const q = safeNum(x.sellQty, 0);
+        if (q < 0) throw new Error("Sell quantity cannot be negative.");
+        if (q > max) throw new Error("Sell quantity cannot exceed reserved quantity.");
+      }
+
+      const anySell = sellItems.some((x) => safeNum(x.sellQty, 0) > 0);
+      if (!anySell) {
+        setError("Choose at least 1 quantity to sell.");
+        return;
+      }
+
+      // fetch entree detail for filling sortie row fields
+      const entreeIds = sellItems
+        .map((x) => String(x.item.entreeRowId ?? "").trim())
         .filter(Boolean);
 
       const entreeMap = await fetchEntreeByIds(entreeIds);
 
-      const payload: SortieInsert[] = (selected.items ?? []).map((it) => {
-        const e = entreeMap.get(String(it.entreeRowId));
+      // build sortie payload only for sold qty > 0
+      const payload: SortieInsert[] = sellItems
+        .filter((x) => safeNum(x.sellQty, 0) > 0)
+        .map((x) => {
+          const it = x.item;
+          const e = entreeMap.get(String(it.entreeRowId));
 
-        return {
-          date_chg: todayISO(),
-          dossier: "",
-          client: selected.client ?? "",
-          mat_transport: "",
+          return {
+            date_chg: todayISO(),
+            dossier: "",
+            client: selected.client ?? "",
+            mat_transport: "",
 
-          lot: String(e?.Lot ?? it.Lot ?? "") || null,
-          date_production: String(e?.Date_production ?? "") || null,
-          produit: String(e?.Produit ?? it.Produit ?? "") || null,
-          calibre: String(e?.Calibre ?? it.Calibre ?? "nan") || null,
-          qualite: String(e?.Qualite ?? it.Qualite ?? "nan") || null,
+            lot: String(e?.Lot ?? it.Lot ?? "") || null,
+            date_production: String(e?.Date_production ?? "") || null,
+            produit: String(e?.Produit ?? it.Produit ?? "") || null,
+            calibre: String(e?.Calibre ?? it.Calibre ?? "nan") || null,
+            qualite: String(e?.Qualite ?? it.Qualite ?? "nan") || null,
 
-          pct_ctrl: (e?.["%_Ctrl"] ?? null) as any,
-          gr_mn: (e?.Gr_mn ?? null) as any,
-          gr_mx: (e?.Gr_mx ?? null) as any,
+            pct_ctrl: (e?.["%_Ctrl"] ?? null) as any,
+            gr_mn: (e?.Gr_mn ?? null) as any,
+            gr_mx: (e?.Gr_mx ?? null) as any,
 
-          emballage: String(e?.Emballage ?? "") || null,
-          pu: (e?.PU ?? null) as any,
-          colis: (e?.Colis ?? null) as any,
-          quantite: safeNum(it.reservedQty, 0),
-        };
-      });
+            emballage: String(e?.Emballage ?? "") || null,
+            pu: (e?.PU ?? null) as any,
+            colis: (e?.Colis ?? null) as any,
+            quantite: safeNum(x.sellQty, 0),
+          };
+        });
 
       const { error: insErr } = await supabase.from("sortie").insert(payload);
       if (insErr) throw new Error(insErr.message);
 
-      await deleteReservation(selected.reservationId);
+      // Update parking_items reserved_qty (remaining qty)
+      // If remaining is 0 -> delete item row; else update
+      for (const x of sellItems) {
+        const it = x.item;
+        const sold = safeNum(x.sellQty, 0);
+        const max = safeNum(it.reservedQty, 0);
+        const remaining = Math.max(0, max - sold);
 
+        if (!it.id) continue; // safety (should exist from DB)
+        if (remaining === 0) {
+          const { error: delItemErr } = await supabase.from("parking_items").delete().eq("id", it.id);
+          if (delItemErr) throw new Error(delItemErr.message);
+        } else {
+          const { error: updItemErr } = await supabase.from("parking_items").update({ reserved_qty: remaining }).eq("id", it.id);
+          if (updItemErr) throw new Error(updItemErr.message);
+        }
+      }
+
+      // Check if reservation still has any items left
+      const { data: left, error: leftErr } = await supabase
+        .from("parking_items")
+        .select("id")
+        .eq("reservation_id", selected.reservationId)
+        .limit(1);
+
+      if (leftErr) throw new Error(leftErr.message);
+
+      if (!left || left.length === 0) {
+        // remove reservation row too
+        const { error: delResErr } = await supabase
+          .from("parking_reservations")
+          .delete()
+          .eq("reservation_id", selected.reservationId);
+        if (delResErr) throw new Error(delResErr.message);
+      }
+
+      setOpenSell(false);
       setSelectedId(null);
       await load();
-      setInfo(`Sold reservation #${selected.reservationId}. Moved ${payload.length} item(s) to Sortie.`);
+
+      setInfo(
+        `Sold from reservation #${selected.reservationId}. Added ${payload.length} item(s) to Sortie.`
+      );
     } catch (e: any) {
       setError(e?.message ?? "Sell failed.");
     }
   };
 
+  // -----------------------------
+  // Modify dialog item helpers
+  // -----------------------------
   const updateItem = (idx: number, patch: Partial<ParkingItem>) => {
     setEditItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   };
@@ -624,7 +705,8 @@ export default function ParkingPage() {
             Send
           </Button>
 
-          <Button variant="contained" color="success" onClick={handleSell} disabled={!selected}>
+          {/* Sell now opens a dialog */}
+          <Button variant="contained" color="success" onClick={openSellDialog} disabled={!selected}>
             Sell
           </Button>
         </Stack>
@@ -700,6 +782,91 @@ export default function ParkingPage() {
           </Stack>
         )}
       </Paper>
+
+      {/* SELL dialog */}
+      <Dialog open={openSell} onClose={() => setOpenSell(false)} maxWidth="lg" fullWidth>
+        <DialogTitle>Sell from reservation</DialogTitle>
+        <DialogContent>
+          {!selected ? (
+            <Typography variant="body2">No reservation selected.</Typography>
+          ) : (
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+                <Chip label={`Reservation #${selected.reservationId}`} />
+                <Chip label={`Client: ${selected.client}`} />
+                <Chip label={`Total Reserved Qty: ${sumQty(selected.items ?? [])}`} />
+              </Stack>
+
+              <Stack direction="row" spacing={1}>
+                <Button variant="outlined" onClick={setSellAll}>
+                  Sell All
+                </Button>
+                <Button variant="text" onClick={setSellNone}>
+                  Clear
+                </Button>
+              </Stack>
+
+              <Paper variant="outlined" sx={{ borderRadius: 2 }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Lot</TableCell>
+                      <TableCell>Produit</TableCell>
+                      <TableCell>Calibre</TableCell>
+                      <TableCell align="right">Reserved</TableCell>
+                      <TableCell align="right">Sell Qty</TableCell>
+                      <TableCell align="right">Remaining</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {sellItems.map((x, idx) => {
+                      const reserved = safeNum(x.item.reservedQty, 0);
+                      const sellQty = safeNum(x.sellQty, 0);
+                      const remaining = Math.max(0, reserved - sellQty);
+                      return (
+                        <TableRow key={(x.item.id ?? "") + idx}>
+                          <TableCell>{x.item.Lot}</TableCell>
+                          <TableCell>{x.item.Produit}</TableCell>
+                          <TableCell>{x.item.Calibre}</TableCell>
+                          <TableCell align="right">{reserved}</TableCell>
+                          <TableCell align="right" sx={{ width: 180 }}>
+                            <TextField
+                              type="number"
+                              value={sellQty}
+                              inputProps={{ min: 0, max: reserved }}
+                              onChange={(e) => {
+                                const v = safeNum(e.target.value, 0);
+                                setSellItems((prev) =>
+                                  prev.map((p, i) =>
+                                    i === idx ? { ...p, sellQty: Math.max(0, Math.min(reserved, v)) } : p
+                                  )
+                                );
+                              }}
+                              size="small"
+                              fullWidth
+                            />
+                          </TableCell>
+                          <TableCell align="right">{remaining}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </Paper>
+
+              <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                Selling partially will keep the remaining quantity in Parking.
+              </Typography>
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setOpenSell(false)}>Cancel</Button>
+          <Button variant="contained" color="success" onClick={confirmSell} disabled={!selected}>
+            Confirm Sell
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* DELETE dialog */}
       <Dialog open={openDelete} onClose={() => setOpenDelete(false)} maxWidth="sm" fullWidth>
@@ -777,39 +944,19 @@ export default function ParkingPage() {
                       </TableCell>
 
                       <TableCell>
-                        <TextField
-                          value={it.Code_Prp}
-                          onChange={(e) => updateItem(idx, { Code_Prp: e.target.value })}
-                          size="small"
-                          fullWidth
-                        />
+                        <TextField value={it.Code_Prp} onChange={(e) => updateItem(idx, { Code_Prp: e.target.value })} size="small" fullWidth />
                       </TableCell>
 
                       <TableCell>
-                        <TextField
-                          value={it.Produit}
-                          onChange={(e) => updateItem(idx, { Produit: e.target.value })}
-                          size="small"
-                          fullWidth
-                        />
+                        <TextField value={it.Produit} onChange={(e) => updateItem(idx, { Produit: e.target.value })} size="small" fullWidth />
                       </TableCell>
 
                       <TableCell>
-                        <TextField
-                          value={it.Calibre}
-                          onChange={(e) => updateItem(idx, { Calibre: e.target.value })}
-                          size="small"
-                          fullWidth
-                        />
+                        <TextField value={it.Calibre} onChange={(e) => updateItem(idx, { Calibre: e.target.value })} size="small" fullWidth />
                       </TableCell>
 
                       <TableCell>
-                        <TextField
-                          value={it.Qualite}
-                          onChange={(e) => updateItem(idx, { Qualite: e.target.value })}
-                          size="small"
-                          fullWidth
-                        />
+                        <TextField value={it.Qualite} onChange={(e) => updateItem(idx, { Qualite: e.target.value })} size="small" fullWidth />
                       </TableCell>
 
                       <TableCell align="right">
@@ -844,7 +991,7 @@ export default function ParkingPage() {
               </Table>
 
               <Typography variant="body2" sx={{ color: "text.secondary", mt: 1 }}>
-                Note: Modify now syncs Entreé quantities (reserve more / release back).
+                Note: Modify syncs Entreé quantities (reserve more / release back).
               </Typography>
             </Paper>
           </Stack>

@@ -68,13 +68,14 @@ type EntreeRow = {
 };
 
 type ParkingItem = {
-  entreeRowId: string;
+  entreeRowId: string; // uuid
   Lot: string;
   Code_Prp: string;
   Produit: string;
   Calibre: string;
   Qualite: string;
   reservedQty: number;
+  reservedColis: number | null; // ✅ NEW for Total colis
 };
 
 type FilterForm = {
@@ -110,7 +111,6 @@ function isTempId(id: string) {
   return String(id).startsWith("tmp-");
 }
 function makeTempId() {
-  // Stable temp id for DataGrid before DB generates uuid
   const u =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
@@ -190,7 +190,6 @@ function dbToUi(r: EntreeDbRow): EntreeRow {
 }
 
 function uiToDbForUpsert(r: EntreeRow) {
-  // For existing rows (real uuid)
   return {
     id: r.id,
     lot: r.Lot || null,
@@ -210,7 +209,6 @@ function uiToDbForUpsert(r: EntreeRow) {
 }
 
 function uiToDbForInsert(r: EntreeRow) {
-  // For new rows (let DB generate uuid) => DO NOT send id
   return {
     lot: r.Lot || null,
     code_prp: (r.Code_Prp as any) || null,
@@ -330,13 +328,13 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
       if (error) throw new Error(error.message);
 
       const ui = (data as any[]).map((r) => dbToUi(r as any));
-      setRows(ui); // ✅ allow empty table
+      setRows(ui);
       setLastSavedRows(ui);
       setDeletedIds(new Set());
       setLoading(false);
     } catch (e: any) {
       setErrorMessages([e?.message ?? "Failed to load Entree"]);
-      setRows([]); // ✅ keep empty on error too (you can still create new entries)
+      setRows([]);
       setLastSavedRows([]);
       setDeletedIds(new Set());
       setLoading(false);
@@ -463,7 +461,6 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
       setInfo("");
       setErrorMessages([]);
 
-      // 1) delete removed rows (only real ids)
       if (deletedIds.size) {
         const ids = Array.from(deletedIds).filter((id) => !isTempId(id));
         if (ids.length) {
@@ -472,27 +469,22 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         }
       }
 
-      // 2) split rows: existing vs new
       const existing = rows.filter((r) => !isTempId(r.id));
       const fresh = rows.filter((r) => isTempId(r.id));
 
-      // 2a) upsert existing
       if (existing.length) {
         const payloadUpsert = existing.map(uiToDbForUpsert);
         const { error: upErr } = await supabase.from("entree").upsert(payloadUpsert, { onConflict: "id" });
         if (upErr) throw new Error(upErr.message);
       }
 
-      // 2b) insert new (DB generates uuid)
       if (fresh.length) {
         const payloadInsert = fresh.map(uiToDbForInsert);
         const { error: insErr } = await supabase.from("entree").insert(payloadInsert);
         if (insErr) throw new Error(insErr.message);
       }
 
-      // 3) reload to get real UUIDs + keep order consistent
       await loadFromDb();
-
       setInfo("Saved to database.");
     } catch (e: any) {
       setErrorMessages([e?.message ?? "Save failed."]);
@@ -679,7 +671,6 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
   const confirmDeleteSelected = () => {
     const idsToDelete = new Set(selectedIdsArray.map(String));
 
-    // mark for DB delete (only real ids)
     setDeletedIds((prev) => {
       const next = new Set(prev);
       for (const id of idsToDelete) {
@@ -689,7 +680,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
     });
 
     const updated = rows.filter((r) => !idsToDelete.has(String(r.id)));
-    setRows(updated); // ✅ can be empty
+    setRows(updated);
 
     setSelectedRowIds({ type: "include", ids: new Set() } as any);
     setOpenDeleteRows(false);
@@ -710,7 +701,6 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
 
     const targets = applyFilterFormToRows(rows, filterForm);
 
-    // prevent parking unsaved temp rows
     const hasTemp = targets.some((r) => isTempId(r.id));
     if (hasTemp) {
       setErrorMessages(["Some filtered rows are not saved to DB yet. Please Save first, then Park."]);
@@ -766,7 +756,6 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         return;
       }
 
-      // check unique reservation id
       const { data: exists, error: exErr } = await supabase
         .from("parking_reservations")
         .select("reservation_id")
@@ -785,28 +774,41 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
       });
       if (insResErr) throw new Error(insResErr.message);
 
-      // insert items
+      // ✅ Build items + reserved_colis
       const items: ParkingItem[] = parkRows
         .filter((p) => p.reserveQty > 0)
-        .map((p) => ({
-          entreeRowId: p.row.id,
-          Lot: p.row.Lot,
-          Code_Prp: String(p.row.Code_Prp ?? ""),
-          Produit: String(p.row.Produit ?? ""),
-          Calibre: String(p.row.Calibre ?? ""),
-          Qualite: String(p.row.Qualite ?? ""),
-          reservedQty: p.reserveQty,
-        }));
+        .map((p) => {
+          const qtyTotal = Number(p.row.Quantite ?? 0);
+          const colisTotal = p.row.Colis == null ? null : Number(p.row.Colis);
 
+          const reservedColis =
+            colisTotal != null && Number.isFinite(colisTotal) && qtyTotal > 0
+              ? (Number(p.reserveQty) / qtyTotal) * colisTotal
+              : null;
+
+          return {
+            entreeRowId: p.row.id, // uuid
+            Lot: p.row.Lot,
+            Code_Prp: String(p.row.Code_Prp ?? ""),
+            Produit: String(p.row.Produit ?? ""),
+            Calibre: String(p.row.Calibre ?? ""),
+            Qualite: String(p.row.Qualite ?? ""),
+            reservedQty: Number(p.reserveQty),
+            reservedColis,
+          };
+        });
+
+      // ✅ Insert parking_items (entree_id + reserved_colis)
       const itemPayload = items.map((it) => ({
         reservation_id: rid,
-        entree_id: it.entreeRowId || null,
+        entree_id: it.entreeRowId || null,      // ✅ uses uuid
         lot: it.Lot || null,
         code_prp: it.Code_Prp || null,
         produit: it.Produit || null,
         calibre: it.Calibre || null,
         qualite: it.Qualite || null,
         reserved_qty: it.reservedQty,
+        reserved_colis: it.reservedColis,       // ✅ NEW
       }));
 
       const { error: insItemsErr } = await supabase.from("parking_items").insert(itemPayload);
@@ -821,7 +823,6 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         return { ...r, Quantite: Math.max(0, current - reserved) };
       });
 
-      // push updated quantities to DB (only for affected rows)
       const affected = parkRows.filter((p) => p.reserveQty > 0).map((p) => p.row.id);
       const affectedMap = new Map(updatedRows.map((r) => [r.id, r]));
       const updates = affected.map((id) => {
@@ -833,7 +834,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
       if (updErr) throw new Error(updErr.message);
 
       setRows(updatedRows);
-      setLastSavedRows(updatedRows); // DB already updated
+      setLastSavedRows(updatedRows);
       setOpenPark(false);
       setErrorMessages([]);
       setInfo(`Parked reservation #${rid} for ${parkClient}. Quantities updated.`);
@@ -1139,19 +1140,10 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-              <TextField
-                label="Lot"
-                value={draft.Lot}
-                onChange={(e) => setDraft((p) => ({ ...p, Lot: e.target.value }))}
-                fullWidth
-              />
+              <TextField label="Lot" value={draft.Lot} onChange={(e) => setDraft((p) => ({ ...p, Lot: e.target.value }))} fullWidth />
               <FormControl fullWidth>
                 <InputLabel>Code_Prp</InputLabel>
-                <Select
-                  label="Code_Prp"
-                  value={draft.Code_Prp}
-                  onChange={(e) => setDraft((p) => ({ ...p, Code_Prp: e.target.value as any }))}
-                >
+                <Select label="Code_Prp" value={draft.Code_Prp} onChange={(e) => setDraft((p) => ({ ...p, Code_Prp: e.target.value as any }))}>
                   <MenuItem value="">(empty)</MenuItem>
                   {CODE_PRP_OPTIONS.map((o) => (
                     <MenuItem key={o} value={o}>
@@ -1174,11 +1166,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
               <FormControl fullWidth>
                 <InputLabel>Produit</InputLabel>
-                <Select
-                  label="Produit"
-                  value={draft.Produit}
-                  onChange={(e) => setDraft((p) => ({ ...p, Produit: e.target.value as any }))}
-                >
+                <Select label="Produit" value={draft.Produit} onChange={(e) => setDraft((p) => ({ ...p, Produit: e.target.value as any }))}>
                   <MenuItem value="">(empty)</MenuItem>
                   {PRODUIT_OPTIONS.map((o) => (
                     <MenuItem key={o} value={o}>
@@ -1190,11 +1178,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
 
               <FormControl fullWidth>
                 <InputLabel>Calibre</InputLabel>
-                <Select
-                  label="Calibre"
-                  value={draft.Calibre}
-                  onChange={(e) => setDraft((p) => ({ ...p, Calibre: e.target.value as string }))}
-                >
+                <Select label="Calibre" value={draft.Calibre} onChange={(e) => setDraft((p) => ({ ...p, Calibre: e.target.value as string }))}>
                   <MenuItem value="nan">nan</MenuItem>
                   {draft.Produit ? CALIBRE_BY_PRODUIT[draft.Produit].map((o) => <MenuItem key={o} value={o}>{o}</MenuItem>) : null}
                 </Select>
@@ -1202,11 +1186,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
 
               <FormControl fullWidth>
                 <InputLabel>Qualite</InputLabel>
-                <Select
-                  label="Qualite"
-                  value={draft.Qualite}
-                  onChange={(e) => setDraft((p) => ({ ...p, Qualite: e.target.value as any }))}
-                >
+                <Select label="Qualite" value={draft.Qualite} onChange={(e) => setDraft((p) => ({ ...p, Qualite: e.target.value as any }))}>
                   {QUALITE_OPTIONS.map((o) => (
                     <MenuItem key={o} value={o}>
                       {o}
@@ -1217,34 +1197,15 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
             </Stack>
 
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-              <TextField
-                label="% Ctrl"
-                value={draft["%_Ctrl"] ?? ""}
-                onChange={(e) => setDraft((p) => ({ ...p, "%_Ctrl": toNumberOrNull(e.target.value) }))}
-                fullWidth
-              />
-              <TextField
-                label="Gr mn"
-                value={draft.Gr_mn ?? ""}
-                onChange={(e) => setDraft((p) => ({ ...p, Gr_mn: toNumberOrNull(e.target.value) }))}
-                fullWidth
-              />
-              <TextField
-                label="Gr mx"
-                value={draft.Gr_mx ?? ""}
-                onChange={(e) => setDraft((p) => ({ ...p, Gr_mx: toNumberOrNull(e.target.value) }))}
-                fullWidth
-              />
+              <TextField label="% Ctrl" value={draft["%_Ctrl"] ?? ""} onChange={(e) => setDraft((p) => ({ ...p, "%_Ctrl": toNumberOrNull(e.target.value) }))} fullWidth />
+              <TextField label="Gr mn" value={draft.Gr_mn ?? ""} onChange={(e) => setDraft((p) => ({ ...p, Gr_mn: toNumberOrNull(e.target.value) }))} fullWidth />
+              <TextField label="Gr mx" value={draft.Gr_mx ?? ""} onChange={(e) => setDraft((p) => ({ ...p, Gr_mx: toNumberOrNull(e.target.value) }))} fullWidth />
             </Stack>
 
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
               <FormControl fullWidth>
                 <InputLabel>Emballage</InputLabel>
-                <Select
-                  label="Emballage"
-                  value={draft.Emballage}
-                  onChange={(e) => setDraft((p) => ({ ...p, Emballage: e.target.value as any }))}
-                >
+                <Select label="Emballage" value={draft.Emballage} onChange={(e) => setDraft((p) => ({ ...p, Emballage: e.target.value as any }))}>
                   <MenuItem value="">(empty)</MenuItem>
                   {EMBALLAGE_OPTIONS.map((o) => (
                     <MenuItem key={o} value={o}>
@@ -1254,24 +1215,9 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
                 </Select>
               </FormControl>
 
-              <TextField
-                label="PU"
-                value={draft.PU ?? ""}
-                onChange={(e) => setDraft((p) => ({ ...p, PU: toNumberOrNull(e.target.value) }))}
-                fullWidth
-              />
-              <TextField
-                label="Colis"
-                value={draft.Colis ?? ""}
-                onChange={(e) => setDraft((p) => ({ ...p, Colis: toNumberOrNull(e.target.value) }))}
-                fullWidth
-              />
-              <TextField
-                label="Quantite"
-                value={draft.Quantite ?? ""}
-                onChange={(e) => setDraft((p) => ({ ...p, Quantite: toNumberOrNull(e.target.value) }))}
-                fullWidth
-              />
+              <TextField label="PU" value={draft.PU ?? ""} onChange={(e) => setDraft((p) => ({ ...p, PU: toNumberOrNull(e.target.value) }))} fullWidth />
+              <TextField label="Colis" value={draft.Colis ?? ""} onChange={(e) => setDraft((p) => ({ ...p, Colis: toNumberOrNull(e.target.value) }))} fullWidth />
+              <TextField label="Quantite" value={draft.Quantite ?? ""} onChange={(e) => setDraft((p) => ({ ...p, Quantite: toNumberOrNull(e.target.value) }))} fullWidth />
             </Stack>
           </Stack>
         </DialogContent>
@@ -1331,7 +1277,9 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
                           inputProps={{ min: 0, max: p.maxQty }}
                           onChange={(e) => {
                             const v = Number(e.target.value);
-                            setParkRows((prev) => prev.map((x, i) => (i === idx ? { ...x, reserveQty: Number.isFinite(v) ? v : 0 } : x)));
+                            setParkRows((prev) =>
+                              prev.map((x, i) => (i === idx ? { ...x, reserveQty: Number.isFinite(v) ? v : 0 } : x))
+                            );
                           }}
                           fullWidth
                         />
