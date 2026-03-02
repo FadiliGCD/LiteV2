@@ -128,13 +128,23 @@ function groupSumByEntreeId(items: ParkingItem[]) {
   return m;
 }
 
-// Compute "reserved colis" proportional to qty if possible
 // reserved_colis ≈ (entree.Colis / entree.Quantite) * reservedQty
 function calcReservedColis(entree: EntreeRow | undefined, reservedQty: number) {
   const colis = safeNum(entree?.Colis, 0);
   const quantite = safeNum(entree?.Quantite, 0);
   if (colis <= 0 || quantite <= 0 || reservedQty <= 0) return 0;
   return (colis / quantite) * reservedQty;
+}
+
+// Split a TOTAL sell qty across items (top to bottom)
+function distributeSell(items: ParkingItem[], totalSell: number) {
+  let remaining = Math.max(0, totalSell);
+  return items.map((it) => {
+    const max = safeNum(it.reservedQty, 0);
+    const sellQty = Math.min(max, remaining);
+    remaining -= sellQty;
+    return { item: it, sellQty };
+  });
 }
 
 // -----------------------------
@@ -329,12 +339,14 @@ export default function ParkingPage() {
   const [editClient, setEditClient] = React.useState<string>("");
   const [editItems, setEditItems] = React.useState<ParkingItem[]>([]);
 
-  // SELL dialog (partial sell)
-  const [openSell, setOpenSell] = React.useState(false);
-  const [sellItems, setSellItems] = React.useState<Array<{ item: ParkingItem; sellQty: number }>>([]);
-
   // DATA dialog
   const [openData, setOpenData] = React.useState(false);
+
+  // SELL dialog (full vs partial)
+  const [openSell, setOpenSell] = React.useState(false);
+  const [sellMode, setSellMode] = React.useState<"full" | "partial">("full");
+  const [sellTotal, setSellTotal] = React.useState<string>(""); // total qty to sell (when partial)
+  const [sellItems, setSellItems] = React.useState<Array<{ item: ParkingItem; sellQty: number }>>([]);
 
   const selected = React.useMemo(
     () => reservations.find((r) => r.reservationId === selectedId) ?? null,
@@ -420,7 +432,6 @@ export default function ParkingPage() {
     setError("");
     setInfo("");
 
-    // ensure entree cache has all ids for selected
     const ids = Array.from(
       new Set(
         (selected.items ?? [])
@@ -582,9 +593,6 @@ export default function ParkingPage() {
     }
   };
 
-  // -----------------------------
-  // Send
-  // -----------------------------
   const handleSend = () => {
     if (!selected) return;
     setError("");
@@ -592,36 +600,47 @@ export default function ParkingPage() {
   };
 
   // -----------------------------
-  // Sell (partial)
+  // SELL (Full vs Partial)
   // -----------------------------
   const openSellDialog = () => {
     if (!selected) return;
     setError("");
     setInfo("");
-    const prepared = (selected.items ?? []).map((it) => ({
-      item: it,
-      sellQty: safeNum(it.reservedQty, 0),
-    }));
-    setSellItems(prepared);
+
+    const totalReserved = sumQty(selected.items ?? []);
+
+    // default = full sell
+    setSellMode("full");
+    setSellTotal(String(totalReserved));
+    setSellItems(distributeSell(selected.items ?? [], totalReserved));
+
     setOpenSell(true);
   };
 
-  const setSellAll = () => {
-    setSellItems((prev) =>
-      prev.map((x) => ({
-        ...x,
-        sellQty: safeNum(x.item.reservedQty, 0),
-      }))
-    );
+  const onSellModeChange = (mode: "full" | "partial") => {
+    if (!selected) return;
+    const totalReserved = sumQty(selected.items ?? []);
+
+    setSellMode(mode);
+
+    if (mode === "full") {
+      setSellTotal(String(totalReserved));
+      setSellItems(distributeSell(selected.items ?? [], totalReserved));
+    } else {
+      // partial default = totalReserved (user can reduce)
+      setSellTotal(String(totalReserved));
+      setSellItems(distributeSell(selected.items ?? [], totalReserved));
+    }
   };
 
-  const setSellNone = () => {
-    setSellItems((prev) =>
-      prev.map((x) => ({
-        ...x,
-        sellQty: 0,
-      }))
-    );
+  const onSellTotalChange = (val: string) => {
+    if (!selected) return;
+    const totalReserved = sumQty(selected.items ?? []);
+    const n = safeNum(val, 0);
+    const clamped = Math.max(0, Math.min(totalReserved, n));
+
+    setSellTotal(String(val));
+    setSellItems(distributeSell(selected.items ?? [], clamped));
   };
 
   const confirmSell = async () => {
@@ -631,20 +650,18 @@ export default function ParkingPage() {
       setError("");
       setInfo("");
 
-      for (const x of sellItems) {
-        const max = safeNum(x.item.reservedQty, 0);
-        const q = safeNum(x.sellQty, 0);
-        if (q < 0) throw new Error("Sell quantity cannot be negative.");
-        if (q > max) throw new Error("Sell quantity cannot exceed reserved quantity.");
-      }
+      const totalReserved = sumQty(selected.items ?? []);
+      const wantSellTotal =
+        sellMode === "full" ? totalReserved : Math.max(0, Math.min(totalReserved, safeNum(sellTotal, 0)));
 
-      const anySell = sellItems.some((x) => safeNum(x.sellQty, 0) > 0);
-      if (!anySell) {
-        setError("Choose at least 1 quantity to sell.");
+      if (wantSellTotal <= 0) {
+        setError("Enter a sell quantity greater than 0.");
         return;
       }
 
+      // Build payload from sellItems (already distributed)
       const entreeIds = sellItems
+        .filter((x) => safeNum(x.sellQty, 0) > 0)
         .map((x) => String(x.item.entreeRowId ?? "").trim())
         .filter(Boolean);
 
@@ -682,13 +699,17 @@ export default function ParkingPage() {
       const { error: insErr } = await supabase.from("sortie").insert(payload);
       if (insErr) throw new Error(insErr.message);
 
+      // Update parking_items: decrease reserved_qty; if 0 => delete
       for (const x of sellItems) {
         const it = x.item;
         const sold = safeNum(x.sellQty, 0);
+        if (sold <= 0) continue;
+
         const max = safeNum(it.reservedQty, 0);
         const remaining = Math.max(0, max - sold);
 
         if (!it.id) continue;
+
         if (remaining === 0) {
           const { error: delItemErr } = await supabase.from("parking_items").delete().eq("id", it.id);
           if (delItemErr) throw new Error(delItemErr.message);
@@ -698,6 +719,7 @@ export default function ParkingPage() {
         }
       }
 
+      // If no items left, delete reservation row
       const { data: left, error: leftErr } = await supabase
         .from("parking_items")
         .select("id")
@@ -718,7 +740,7 @@ export default function ParkingPage() {
       setSelectedId(null);
       await load();
 
-      setInfo(`Sold from reservation #${selected.reservationId}. Added ${payload.length} item(s) to Sortie.`);
+      setInfo(`Sold ${wantSellTotal} from reservation #${selected.reservationId}. Added ${payload.length} item(s) to Sortie.`);
     } catch (e: any) {
       setError(e?.message ?? "Sell failed.");
     }
@@ -806,56 +828,99 @@ export default function ParkingPage() {
         </Box>
       </Paper>
 
-      {/* Details (quick view) */}
-      <Paper sx={{ p: 1.2, borderRadius: 3 }}>
-        <Typography variant="h6" sx={{ mb: 1 }}>
-          Reservation Details
-        </Typography>
+      {/* SELL dialog (full vs partial) */}
+      <Dialog open={openSell} onClose={() => setOpenSell(false)} maxWidth="lg" fullWidth>
+        <DialogTitle>Sell Reservation</DialogTitle>
+        <DialogContent>
+          {!selected ? (
+            <Typography variant="body2">No reservation selected.</Typography>
+          ) : (
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+                <Chip label={`Reservation #${selected.reservationId}`} />
+                <Chip label={`Client: ${selected.client}`} />
+                <Chip label={`Total Reserved Qty: ${sumQty(selected.items ?? [])}`} />
+              </Stack>
 
-        {!selected ? (
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Click a reservation above to see its items.
-          </Typography>
-        ) : (
-          <Stack spacing={1}>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-              <Chip label={`Reservation ID: ${selected.reservationId}`} />
-              <Chip label={`Client: ${selected.client}`} />
-              <Chip label={`Created: ${fmtDate(selected.createdAt)}`} />
-              <Chip label={`Total Qty: ${sumQty(selected.items ?? [])}`} />
-            </Stack>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+                <FormControl fullWidth>
+                  <InputLabel>Sell Mode</InputLabel>
+                  <Select
+                    label="Sell Mode"
+                    value={sellMode}
+                    onChange={(e) => onSellModeChange(e.target.value as any)}
+                  >
+                    <MenuItem value="full">Sell Full Quantity</MenuItem>
+                    <MenuItem value="partial">Sell Partial Quantity</MenuItem>
+                  </Select>
+                </FormControl>
 
-            <Paper variant="outlined" sx={{ borderRadius: 2 }}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Lot</TableCell>
-                    <TableCell>Code_Prp</TableCell>
-                    <TableCell>Produit</TableCell>
-                    <TableCell>Calibre</TableCell>
-                    <TableCell>Qualite</TableCell>
-                    <TableCell align="right">Reserved Qty</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {(selected.items ?? []).map((it, idx) => (
-                    <TableRow key={`${it.entreeRowId}-${idx}`}>
-                      <TableCell>{it.Lot}</TableCell>
-                      <TableCell>{it.Code_Prp}</TableCell>
-                      <TableCell>{it.Produit}</TableCell>
-                      <TableCell>{it.Calibre}</TableCell>
-                      <TableCell>{it.Qualite}</TableCell>
-                      <TableCell align="right">{it.reservedQty}</TableCell>
+                {sellMode === "partial" ? (
+                  <TextField
+                    label="Sell quantity (total)"
+                    type="number"
+                    value={sellTotal}
+                    onChange={(e) => onSellTotalChange(e.target.value)}
+                    inputProps={{ min: 0, max: sumQty(selected.items ?? []) }}
+                    fullWidth
+                  />
+                ) : (
+                  <TextField
+                    label="Sell quantity (total)"
+                    value={sumQty(selected.items ?? [])}
+                    fullWidth
+                    disabled
+                  />
+                )}
+              </Stack>
+
+              <Paper variant="outlined" sx={{ borderRadius: 2 }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Lot</TableCell>
+                      <TableCell>Produit</TableCell>
+                      <TableCell>Calibre</TableCell>
+                      <TableCell align="right">Reserved</TableCell>
+                      <TableCell align="right">Sell Qty</TableCell>
+                      <TableCell align="right">Remaining</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Paper>
-          </Stack>
-        )}
-      </Paper>
+                  </TableHead>
+                  <TableBody>
+                    {sellItems.map((x, idx) => {
+                      const reserved = safeNum(x.item.reservedQty, 0);
+                      const sellQty = safeNum(x.sellQty, 0);
+                      const remaining = Math.max(0, reserved - sellQty);
+                      return (
+                        <TableRow key={(x.item.id ?? "") + idx}>
+                          <TableCell>{x.item.Lot}</TableCell>
+                          <TableCell>{x.item.Produit}</TableCell>
+                          <TableCell>{x.item.Calibre}</TableCell>
+                          <TableCell align="right">{reserved}</TableCell>
+                          <TableCell align="right">{sellQty}</TableCell>
+                          <TableCell align="right">{remaining}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </Paper>
 
-      {/* DATA dialog (full view) */}
+              <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                Partial sell automatically distributes the sell quantity across items from top to bottom.
+              </Typography>
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setOpenSell(false)}>Cancel</Button>
+          <Button variant="contained" color="success" onClick={confirmSell} disabled={!selected}>
+            Confirm Sell
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* DATA dialog */}
       <Dialog open={openData} onClose={() => setOpenData(false)} maxWidth="xl" fullWidth>
         <DialogTitle>Reservation Data</DialogTitle>
         <DialogContent>
@@ -922,91 +987,6 @@ export default function ParkingPage() {
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setOpenData(false)}>Close</Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* SELL dialog */}
-      <Dialog open={openSell} onClose={() => setOpenSell(false)} maxWidth="lg" fullWidth>
-        <DialogTitle>Sell from reservation</DialogTitle>
-        <DialogContent>
-          {!selected ? (
-            <Typography variant="body2">No reservation selected.</Typography>
-          ) : (
-            <Stack spacing={2} sx={{ mt: 1 }}>
-              <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-                <Chip label={`Reservation #${selected.reservationId}`} />
-                <Chip label={`Client: ${selected.client}`} />
-                <Chip label={`Total Reserved Qty: ${sumQty(selected.items ?? [])}`} />
-              </Stack>
-
-              <Stack direction="row" spacing={1}>
-                <Button variant="outlined" onClick={setSellAll}>
-                  Sell All
-                </Button>
-                <Button variant="text" onClick={setSellNone}>
-                  Clear
-                </Button>
-              </Stack>
-
-              <Paper variant="outlined" sx={{ borderRadius: 2 }}>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Lot</TableCell>
-                      <TableCell>Produit</TableCell>
-                      <TableCell>Calibre</TableCell>
-                      <TableCell align="right">Reserved</TableCell>
-                      <TableCell align="right">Sell Qty</TableCell>
-                      <TableCell align="right">Remaining</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {sellItems.map((x, idx) => {
-                      const reserved = safeNum(x.item.reservedQty, 0);
-                      const sellQty = safeNum(x.sellQty, 0);
-                      const remaining = Math.max(0, reserved - sellQty);
-                      return (
-                        <TableRow key={(x.item.id ?? "") + idx}>
-                          <TableCell>{x.item.Lot}</TableCell>
-                          <TableCell>{x.item.Produit}</TableCell>
-                          <TableCell>{x.item.Calibre}</TableCell>
-                          <TableCell align="right">{reserved}</TableCell>
-                          <TableCell align="right" sx={{ width: 180 }}>
-                            <TextField
-                              type="number"
-                              value={sellQty}
-                              inputProps={{ min: 0, max: reserved }}
-                              onChange={(e) => {
-                                const v = safeNum(e.target.value, 0);
-                                setSellItems((prev) =>
-                                  prev.map((p, i) =>
-                                    i === idx ? { ...p, sellQty: Math.max(0, Math.min(reserved, v)) } : p
-                                  )
-                                );
-                              }}
-                              size="small"
-                              fullWidth
-                            />
-                          </TableCell>
-                          <TableCell align="right">{remaining}</TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </Paper>
-
-              <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                Selling partially will keep the remaining quantity in Parking.
-              </Typography>
-            </Stack>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setOpenSell(false)}>Cancel</Button>
-          <Button variant="contained" color="success" onClick={confirmSell} disabled={!selected}>
-            Confirm Sell
-          </Button>
         </DialogActions>
       </Dialog>
 
