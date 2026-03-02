@@ -106,6 +106,7 @@ export default function AppLayout() {
           <NavItem to="/entree" label="Entreé" />
           <NavItem to="/parking" label="Parking" />
           <NavItem to="/sortie" label="Sortie" />
+          <NavItem to="/rapport-charge" label="Rapport de charge" />
         </Stack>
 
         <Box sx={{ mt: "auto" }}>

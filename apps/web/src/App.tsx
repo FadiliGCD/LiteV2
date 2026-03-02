@@ -6,6 +6,7 @@ import DashboardPage from "./pages/DashboardPage";
 import EntreePage from "./pages/EntreePage";
 import ParkingPage from "./pages/ParkingPage";
 import SortiePage from "./pages/SortiePage";
+import RapportDeChargePage from "./pages/RapportDeChargePage";
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="entree" element={<EntreePage role="superuser" />} />
           <Route path="parking" element={<ParkingPage />} />
           <Route path="sortie" element={<SortiePage />} />
+          <Route path="rapport-charge" element={<RapportDeChargePage />} />
         </Route>
       </Routes>
     </BrowserRouter>

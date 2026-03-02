@@ -28,6 +28,7 @@ import { DataGrid } from "@mui/x-data-grid";
 import type { GridColDef } from "@mui/x-data-grid";
 
 import { supabase } from "../lib/supabaseClient";
+import { useNavigate } from "react-router-dom";
 
 // -----------------------------
 // Types (UI)
@@ -250,10 +251,7 @@ async function replaceReservationItems(reservationId: number, items: ParkingItem
 
 async function deleteReservation(reservationId: number) {
   await supabase.from("parking_items").delete().eq("reservation_id", reservationId);
-  const { error } = await supabase
-    .from("parking_reservations")
-    .delete()
-    .eq("reservation_id", reservationId);
+  const { error } = await supabase.from("parking_reservations").delete().eq("reservation_id", reservationId);
   if (error) throw new Error(error.message);
 }
 
@@ -320,6 +318,8 @@ async function applyEntreeQuantiteDeltas(deltas: Map<string, number>) {
 // Page
 // -----------------------------
 export default function ParkingPage() {
+  const nav = useNavigate();
+
   const [reservations, setReservations] = React.useState<ParkingReservation[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -345,7 +345,7 @@ export default function ParkingPage() {
   // SELL dialog (full vs partial)
   const [openSell, setOpenSell] = React.useState(false);
   const [sellMode, setSellMode] = React.useState<"full" | "partial">("full");
-  const [sellTotal, setSellTotal] = React.useState<string>(""); // total qty to sell (when partial)
+  const [sellTotal, setSellTotal] = React.useState<string>("");
   const [sellItems, setSellItems] = React.useState<Array<{ item: ParkingItem; sellQty: number }>>([]);
 
   const selected = React.useMemo(
@@ -360,7 +360,6 @@ export default function ParkingPage() {
       const list = await fetchParking();
       setReservations(list);
 
-      // prefetch entree rows for all items so totals are fast
       const ids = Array.from(
         new Set(
           list
@@ -433,11 +432,7 @@ export default function ParkingPage() {
     setInfo("");
 
     const ids = Array.from(
-      new Set(
-        (selected.items ?? [])
-          .map((x) => normalizeEntreeId(x.entreeRowId))
-          .filter(Boolean)
-      )
+      new Set((selected.items ?? []).map((x) => normalizeEntreeId(x.entreeRowId)).filter(Boolean))
     );
 
     const missing = ids.filter((id) => !entreeCache.has(id));
@@ -593,10 +588,12 @@ export default function ParkingPage() {
     }
   };
 
+  // ✅ Send -> Rapport de charge
   const handleSend = () => {
     if (!selected) return;
     setError("");
-    setInfo("Send: will be implemented later (printable Word/PDF step).");
+    setInfo("");
+    nav(`/rapport-charge?rid=${selected.reservationId}`);
   };
 
   // -----------------------------
@@ -609,7 +606,6 @@ export default function ParkingPage() {
 
     const totalReserved = sumQty(selected.items ?? []);
 
-    // default = full sell
     setSellMode("full");
     setSellTotal(String(totalReserved));
     setSellItems(distributeSell(selected.items ?? [], totalReserved));
@@ -627,7 +623,6 @@ export default function ParkingPage() {
       setSellTotal(String(totalReserved));
       setSellItems(distributeSell(selected.items ?? [], totalReserved));
     } else {
-      // partial default = totalReserved (user can reduce)
       setSellTotal(String(totalReserved));
       setSellItems(distributeSell(selected.items ?? [], totalReserved));
     }
@@ -652,14 +647,15 @@ export default function ParkingPage() {
 
       const totalReserved = sumQty(selected.items ?? []);
       const wantSellTotal =
-        sellMode === "full" ? totalReserved : Math.max(0, Math.min(totalReserved, safeNum(sellTotal, 0)));
+        sellMode === "full"
+          ? totalReserved
+          : Math.max(0, Math.min(totalReserved, safeNum(sellTotal, 0)));
 
       if (wantSellTotal <= 0) {
         setError("Enter a sell quantity greater than 0.");
         return;
       }
 
-      // Build payload from sellItems (already distributed)
       const entreeIds = sellItems
         .filter((x) => safeNum(x.sellQty, 0) > 0)
         .map((x) => String(x.item.entreeRowId ?? "").trim())
@@ -699,7 +695,6 @@ export default function ParkingPage() {
       const { error: insErr } = await supabase.from("sortie").insert(payload);
       if (insErr) throw new Error(insErr.message);
 
-      // Update parking_items: decrease reserved_qty; if 0 => delete
       for (const x of sellItems) {
         const it = x.item;
         const sold = safeNum(x.sellQty, 0);
@@ -714,12 +709,14 @@ export default function ParkingPage() {
           const { error: delItemErr } = await supabase.from("parking_items").delete().eq("id", it.id);
           if (delItemErr) throw new Error(delItemErr.message);
         } else {
-          const { error: updItemErr } = await supabase.from("parking_items").update({ reserved_qty: remaining }).eq("id", it.id);
+          const { error: updItemErr } = await supabase
+            .from("parking_items")
+            .update({ reserved_qty: remaining })
+            .eq("id", it.id);
           if (updItemErr) throw new Error(updItemErr.message);
         }
       }
 
-      // If no items left, delete reservation row
       const { data: left, error: leftErr } = await supabase
         .from("parking_items")
         .select("id")
@@ -828,7 +825,7 @@ export default function ParkingPage() {
         </Box>
       </Paper>
 
-      {/* SELL dialog (full vs partial) */}
+      {/* SELL dialog */}
       <Dialog open={openSell} onClose={() => setOpenSell(false)} maxWidth="lg" fullWidth>
         <DialogTitle>Sell Reservation</DialogTitle>
         <DialogContent>
@@ -845,11 +842,7 @@ export default function ParkingPage() {
               <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
                 <FormControl fullWidth>
                   <InputLabel>Sell Mode</InputLabel>
-                  <Select
-                    label="Sell Mode"
-                    value={sellMode}
-                    onChange={(e) => onSellModeChange(e.target.value as any)}
-                  >
+                  <Select label="Sell Mode" value={sellMode} onChange={(e) => onSellModeChange(e.target.value as any)}>
                     <MenuItem value="full">Sell Full Quantity</MenuItem>
                     <MenuItem value="partial">Sell Partial Quantity</MenuItem>
                   </Select>
@@ -865,12 +858,7 @@ export default function ParkingPage() {
                     fullWidth
                   />
                 ) : (
-                  <TextField
-                    label="Sell quantity (total)"
-                    value={sumQty(selected.items ?? [])}
-                    fullWidth
-                    disabled
-                  />
+                  <TextField label="Sell quantity (total)" value={sumQty(selected.items ?? [])} fullWidth disabled />
                 )}
               </Stack>
 
