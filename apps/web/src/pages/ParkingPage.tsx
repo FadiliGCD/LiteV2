@@ -50,7 +50,7 @@ type ParkingReservation = {
   items: ParkingItem[];
 };
 
-// minimal Entree row type (only fields we need when selling + stock sync)
+// minimal Entree row type (only fields we need)
 type EntreeRow = {
   id: string;
   Lot?: string;
@@ -126,6 +126,15 @@ function groupSumByEntreeId(items: ParkingItem[]) {
     m.set(id, prev + safeNum(it.reservedQty, 0));
   }
   return m;
+}
+
+// Compute "reserved colis" proportional to qty if possible
+// reserved_colis ≈ (entree.Colis / entree.Quantite) * reservedQty
+function calcReservedColis(entree: EntreeRow | undefined, reservedQty: number) {
+  const colis = safeNum(entree?.Colis, 0);
+  const quantite = safeNum(entree?.Quantite, 0);
+  if (colis <= 0 || quantite <= 0 || reservedQty <= 0) return 0;
+  return (colis / quantite) * reservedQty;
 }
 
 // -----------------------------
@@ -308,6 +317,9 @@ export default function ParkingPage() {
   const [info, setInfo] = React.useState<string>("");
   const [error, setError] = React.useState<string>("");
 
+  // cached entree rows for totals + data view
+  const [entreeCache, setEntreeCache] = React.useState<Map<string, EntreeRow>>(new Map());
+
   // delete confirm
   const [openDelete, setOpenDelete] = React.useState(false);
 
@@ -321,6 +333,9 @@ export default function ParkingPage() {
   const [openSell, setOpenSell] = React.useState(false);
   const [sellItems, setSellItems] = React.useState<Array<{ item: ParkingItem; sellQty: number }>>([]);
 
+  // DATA dialog
+  const [openData, setOpenData] = React.useState(false);
+
   const selected = React.useMemo(
     () => reservations.find((r) => r.reservationId === selectedId) ?? null,
     [reservations, selectedId]
@@ -332,6 +347,19 @@ export default function ParkingPage() {
     try {
       const list = await fetchParking();
       setReservations(list);
+
+      // prefetch entree rows for all items so totals are fast
+      const ids = Array.from(
+        new Set(
+          list
+            .flatMap((r) => r.items ?? [])
+            .map((it) => normalizeEntreeId(it.entreeRowId))
+            .filter(Boolean)
+        )
+      );
+
+      const map = await fetchEntreeByIds(ids);
+      setEntreeCache(map);
     } catch (e: any) {
       setError(e?.message ?? "Failed to load parking.");
     } finally {
@@ -354,21 +382,28 @@ export default function ParkingPage() {
       { field: "reservationId", headerName: "Reservation ID", width: 140 },
       { field: "client", headerName: "Client", width: 220 },
       { field: "createdAt", headerName: "Created At", width: 220 },
-      { field: "itemsCount", headerName: "Items", width: 90, type: "number" },
+      { field: "totalColis", headerName: "Total Colis", width: 120, type: "number" },
       { field: "totalQty", headerName: "Total Qty", width: 110, type: "number" },
     ];
   }, []);
 
   const gridRows = React.useMemo(() => {
-    return reservations.map((r) => ({
-      id: r.reservationId,
-      reservationId: r.reservationId,
-      client: r.client,
-      createdAt: fmtDate(r.createdAt),
-      itemsCount: r.items?.length ?? 0,
-      totalQty: sumQty(r.items ?? []),
-    }));
-  }, [reservations]);
+    return reservations.map((r) => {
+      const totalColis = (r.items ?? []).reduce((acc, it) => {
+        const e = entreeCache.get(normalizeEntreeId(it.entreeRowId));
+        return acc + calcReservedColis(e, safeNum(it.reservedQty, 0));
+      }, 0);
+
+      return {
+        id: r.reservationId,
+        reservationId: r.reservationId,
+        client: r.client,
+        createdAt: fmtDate(r.createdAt),
+        totalColis: Number(totalColis.toFixed(2)),
+        totalQty: sumQty(r.items ?? []),
+      };
+    });
+  }, [reservations, entreeCache]);
 
   const refresh = async () => {
     setInfo("");
@@ -377,6 +412,43 @@ export default function ParkingPage() {
     setInfo("Refreshed.");
   };
 
+  // -----------------------------
+  // Data dialog
+  // -----------------------------
+  const openDataDialog = async () => {
+    if (!selected) return;
+    setError("");
+    setInfo("");
+
+    // ensure entree cache has all ids for selected
+    const ids = Array.from(
+      new Set(
+        (selected.items ?? [])
+          .map((x) => normalizeEntreeId(x.entreeRowId))
+          .filter(Boolean)
+      )
+    );
+
+    const missing = ids.filter((id) => !entreeCache.has(id));
+    if (missing.length) {
+      try {
+        const add = await fetchEntreeByIds(missing);
+        setEntreeCache((prev) => {
+          const next = new Map(prev);
+          for (const [k, v] of add.entries()) next.set(k, v);
+          return next;
+        });
+      } catch (e: any) {
+        setError(e?.message ?? "Failed to load Entree details for Data view.");
+      }
+    }
+
+    setOpenData(true);
+  };
+
+  // -----------------------------
+  // Modify dialog logic
+  // -----------------------------
   const openModifyDialog = () => {
     if (!selected) return;
     setInfo("");
@@ -477,6 +549,9 @@ export default function ParkingPage() {
     }
   };
 
+  // -----------------------------
+  // Delete dialog
+  // -----------------------------
   const openDeleteDialog = () => {
     setInfo("");
     setError("");
@@ -507,6 +582,9 @@ export default function ParkingPage() {
     }
   };
 
+  // -----------------------------
+  // Send
+  // -----------------------------
   const handleSend = () => {
     if (!selected) return;
     setError("");
@@ -514,7 +592,7 @@ export default function ParkingPage() {
   };
 
   // -----------------------------
-  // SELL (partial) dialog logic
+  // Sell (partial)
   // -----------------------------
   const openSellDialog = () => {
     if (!selected) return;
@@ -522,7 +600,7 @@ export default function ParkingPage() {
     setInfo("");
     const prepared = (selected.items ?? []).map((it) => ({
       item: it,
-      sellQty: safeNum(it.reservedQty, 0), // default = sell all
+      sellQty: safeNum(it.reservedQty, 0),
     }));
     setSellItems(prepared);
     setOpenSell(true);
@@ -553,7 +631,6 @@ export default function ParkingPage() {
       setError("");
       setInfo("");
 
-      // Validate
       for (const x of sellItems) {
         const max = safeNum(x.item.reservedQty, 0);
         const q = safeNum(x.sellQty, 0);
@@ -567,14 +644,12 @@ export default function ParkingPage() {
         return;
       }
 
-      // fetch entree detail for filling sortie row fields
       const entreeIds = sellItems
         .map((x) => String(x.item.entreeRowId ?? "").trim())
         .filter(Boolean);
 
       const entreeMap = await fetchEntreeByIds(entreeIds);
 
-      // build sortie payload only for sold qty > 0
       const payload: SortieInsert[] = sellItems
         .filter((x) => safeNum(x.sellQty, 0) > 0)
         .map((x) => {
@@ -607,15 +682,13 @@ export default function ParkingPage() {
       const { error: insErr } = await supabase.from("sortie").insert(payload);
       if (insErr) throw new Error(insErr.message);
 
-      // Update parking_items reserved_qty (remaining qty)
-      // If remaining is 0 -> delete item row; else update
       for (const x of sellItems) {
         const it = x.item;
         const sold = safeNum(x.sellQty, 0);
         const max = safeNum(it.reservedQty, 0);
         const remaining = Math.max(0, max - sold);
 
-        if (!it.id) continue; // safety (should exist from DB)
+        if (!it.id) continue;
         if (remaining === 0) {
           const { error: delItemErr } = await supabase.from("parking_items").delete().eq("id", it.id);
           if (delItemErr) throw new Error(delItemErr.message);
@@ -625,7 +698,6 @@ export default function ParkingPage() {
         }
       }
 
-      // Check if reservation still has any items left
       const { data: left, error: leftErr } = await supabase
         .from("parking_items")
         .select("id")
@@ -635,7 +707,6 @@ export default function ParkingPage() {
       if (leftErr) throw new Error(leftErr.message);
 
       if (!left || left.length === 0) {
-        // remove reservation row too
         const { error: delResErr } = await supabase
           .from("parking_reservations")
           .delete()
@@ -647,9 +718,7 @@ export default function ParkingPage() {
       setSelectedId(null);
       await load();
 
-      setInfo(
-        `Sold from reservation #${selected.reservationId}. Added ${payload.length} item(s) to Sortie.`
-      );
+      setInfo(`Sold from reservation #${selected.reservationId}. Added ${payload.length} item(s) to Sortie.`);
     } catch (e: any) {
       setError(e?.message ?? "Sell failed.");
     }
@@ -691,6 +760,10 @@ export default function ParkingPage() {
 
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
 
+          <Button variant="outlined" onClick={openDataDialog} disabled={!selected}>
+            Data
+          </Button>
+
           <Button variant="contained" onClick={openModifyDialog} disabled={!selected}>
             Modify
           </Button>
@@ -705,7 +778,6 @@ export default function ParkingPage() {
             Send
           </Button>
 
-          {/* Sell now opens a dialog */}
           <Button variant="contained" color="success" onClick={openSellDialog} disabled={!selected}>
             Sell
           </Button>
@@ -734,7 +806,7 @@ export default function ParkingPage() {
         </Box>
       </Paper>
 
-      {/* Details */}
+      {/* Details (quick view) */}
       <Paper sx={{ p: 1.2, borderRadius: 3 }}>
         <Typography variant="h6" sx={{ mb: 1 }}>
           Reservation Details
@@ -782,6 +854,76 @@ export default function ParkingPage() {
           </Stack>
         )}
       </Paper>
+
+      {/* DATA dialog (full view) */}
+      <Dialog open={openData} onClose={() => setOpenData(false)} maxWidth="xl" fullWidth>
+        <DialogTitle>Reservation Data</DialogTitle>
+        <DialogContent>
+          {!selected ? (
+            <Typography variant="body2">No reservation selected.</Typography>
+          ) : (
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+                <Chip label={`Reservation #${selected.reservationId}`} />
+                <Chip label={`Client: ${selected.client}`} />
+                <Chip label={`Created: ${fmtDate(selected.createdAt)}`} />
+              </Stack>
+
+              <Paper variant="outlined" sx={{ borderRadius: 2 }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Lot</TableCell>
+                      <TableCell>Date production</TableCell>
+                      <TableCell>Produit</TableCell>
+                      <TableCell>Calibre</TableCell>
+                      <TableCell>Qualite</TableCell>
+                      <TableCell align="right">% Ctrl</TableCell>
+                      <TableCell align="right">Gr mn</TableCell>
+                      <TableCell align="right">Gr mx</TableCell>
+                      <TableCell>Emballage</TableCell>
+                      <TableCell align="right">PU</TableCell>
+                      <TableCell align="right">Colis</TableCell>
+                      <TableCell align="right">Reserved Qty</TableCell>
+                      <TableCell align="right">Reserved Colis</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {(selected.items ?? []).map((it, idx) => {
+                      const e = entreeCache.get(normalizeEntreeId(it.entreeRowId));
+                      const reservedColis = calcReservedColis(e, safeNum(it.reservedQty, 0));
+                      return (
+                        <TableRow key={(it.id ?? "") + idx}>
+                          <TableCell>{String(e?.Lot ?? it.Lot ?? "")}</TableCell>
+                          <TableCell>{String(e?.Date_production ?? "")}</TableCell>
+                          <TableCell>{String(e?.Produit ?? it.Produit ?? "")}</TableCell>
+                          <TableCell>{String(e?.Calibre ?? it.Calibre ?? "nan")}</TableCell>
+                          <TableCell>{String(e?.Qualite ?? it.Qualite ?? "nan")}</TableCell>
+                          <TableCell align="right">{e?.["%_Ctrl"] == null ? "" : `${e["%_Ctrl"]}%`}</TableCell>
+                          <TableCell align="right">{e?.Gr_mn ?? ""}</TableCell>
+                          <TableCell align="right">{e?.Gr_mx ?? ""}</TableCell>
+                          <TableCell>{String(e?.Emballage ?? "")}</TableCell>
+                          <TableCell align="right">{e?.PU ?? ""}</TableCell>
+                          <TableCell align="right">{e?.Colis ?? ""}</TableCell>
+                          <TableCell align="right">{safeNum(it.reservedQty, 0)}</TableCell>
+                          <TableCell align="right">{Number(reservedColis.toFixed(2))}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </Paper>
+
+              <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                Total Colis is estimated proportionally: (Entree.Colis / Entree.Quantite) × ReservedQty.
+              </Typography>
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setOpenData(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* SELL dialog */}
       <Dialog open={openSell} onClose={() => setOpenSell(false)} maxWidth="lg" fullWidth>
