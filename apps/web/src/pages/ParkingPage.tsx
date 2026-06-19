@@ -593,7 +593,7 @@ export default function ParkingPage() {
     if (!selected) return;
     setError("");
     setInfo("");
-    nav(`/rapport-charge?rid=${selected.reservationId}`);
+    nav(`/stock/rapport-charge?rid=${selected.reservationId}`);
   };
 
   // -----------------------------

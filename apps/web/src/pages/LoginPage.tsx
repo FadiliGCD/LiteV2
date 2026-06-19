@@ -20,7 +20,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await signInWithEmail(email.trim(), password);
-      nav("/", { replace: true });
+      nav("/modules", { replace: true });
     } catch (e: any) {
       setError(e?.message ?? "Login failed");
     } finally {
