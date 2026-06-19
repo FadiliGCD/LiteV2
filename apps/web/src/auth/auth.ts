@@ -116,11 +116,19 @@ export async function getSession(): Promise<AppSession | null> {
 }
 
 export function onAuthChange(cb: (session: AppSession | null) => void) {
-  return supabase.auth.onAuthStateChange(async (_event, _session) => {
-    // Auth changed => session/role could change
-    clearCache();
-    const s = await getSession();
-    cb(s);
+  return supabase.auth.onAuthStateChange((_event, authSession) => {
+    // Logout: respond immediately without another Supabase request
+    if (!authSession?.user) {
+      cb(null);
+      return;
+    }
+
+    // Run profile/session lookup after the auth callback has completed
+    window.setTimeout(() => {
+      void getSession()
+        .then((session) => cb(session))
+        .catch(() => cb(null));
+    }, 0);
   });
 }
 

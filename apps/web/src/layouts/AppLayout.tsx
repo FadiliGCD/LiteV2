@@ -96,9 +96,14 @@ export default function AppLayout() {
   }, []);
 
   const logout = async () => {
+  try {
     await signOut();
+  } catch (error) {
+    console.error("Logout failed:", error);
+  } finally {
     navigate("/login", { replace: true });
-  };
+  }
+};
 
   return (
     <Box
