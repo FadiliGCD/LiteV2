@@ -840,6 +840,44 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
     setInfo("Filter cleared.");
   };
 
+  const duplicateSelectedRow = () => {
+    if (!canEditRole) return;
+
+    if (selectedIdsArray.length !== 1) {
+      setErrorMessages(["Select exactly one row to duplicate."]);
+      return;
+    }
+
+   const selectedId = String(selectedIdsArray[0]);
+   const sourceIndex = rows.findIndex((r) => String(r.id) === selectedId);
+
+    if (sourceIndex === -1) {
+      setErrorMessages(["Selected row was not found."]);
+      return;
+    }
+
+   const sourceRow = rows[sourceIndex];
+
+   const duplicatedRow: EntreeRow = {
+      ...sourceRow,
+      id: makeTempId(),
+      Calibre: sourceRow.Calibre?.trim() ? sourceRow.Calibre : "nan",
+    };
+
+   const nextRows = [...rows];
+   nextRows.splice(sourceIndex, 0, duplicatedRow);
+
+   setRows(nextRows);
+
+   setSelectedRowIds({
+      type: "include",
+      ids: new Set<GridRowId>([duplicatedRow.id]),
+    } as any);
+
+    setErrorMessages([]);
+    setInfo("Row duplicated. Modify the copied row, then click Save.");
+  };
+
   const openDeleteSelected = () => {
     if (!selectedIdsArray.length) {
       setErrorMessages(["Select at least one row (checkbox) to delete."]);
@@ -1100,6 +1138,14 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
 
           <Button variant="contained" onClick={openNewEntry} disabled={!canEditRole}>
             New Entry
+          </Button>
+
+          <Button
+            variant="outlined"
+            onClick={duplicateSelectedRow}
+            disabled={!canEditRole || selectedIdsArray.length !== 1}
+          >
+            Duplicate
           </Button>
 
           <Button
