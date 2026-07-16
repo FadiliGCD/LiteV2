@@ -31,7 +31,6 @@ import type {
   GridRowId,
   GridRowSelectionModel,
   GridCellParams,
-  GridFilterModel,
 } from "@mui/x-data-grid";
 
 import type { Emballage, CodePrp, Produit, Qualite } from "@lite/shared";
@@ -327,9 +326,9 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
       ids: new Set<GridRowId>(),
     });
 
-  const [filterModel, setFilterModel] = React.useState<GridFilterModel>({
-    items: [],
-  });
+  const [activeFilterForm, setActiveFilterForm] = React.useState<FilterForm>(() =>
+    emptyFilterForm()
+  );
   const [errorMessages, setErrorMessages] = React.useState<string[]>([]);
   const [info, setInfo] = React.useState<string>("");
 
@@ -665,92 +664,6 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
   const hasAnyMultiFilter = (f: FilterForm) =>
     Object.values(f).some((v) => String(v ?? "").trim() !== "");
 
-  const buildFilterModelFromForm = (f: FilterForm): GridFilterModel => {
-    const items: any[] = [];
-
-    if (f.Lot.trim()) {
-      items.push({
-        field: "Lot",
-        operator: "contains",
-        value: f.Lot.trim(),
-      });
-    }
-
-    if (f.Code_Prp.trim()) {
-      items.push({
-        field: "Code_Prp",
-        operator: "equals",
-        value: f.Code_Prp.trim(),
-      });
-    }
-
-    if (f.Produit.trim()) {
-      items.push({
-        field: "Produit",
-        operator: "equals",
-        value: f.Produit.trim(),
-      });
-    }
-
-    if (f.Calibre.trim()) {
-      items.push({
-        field: "Calibre",
-        operator: "contains",
-        value: f.Calibre.trim(),
-      });
-    }
-
-    if (f.Qualite.trim()) {
-      items.push({
-        field: "Qualite",
-        operator: "equals",
-        value: f.Qualite.trim(),
-      });
-    }
-
-    if (f.Emballage.trim()) {
-      items.push({
-        field: "Emballage",
-        operator: "equals",
-        value: f.Emballage.trim(),
-      });
-    }
-
-    if (f.Date_from.trim()) {
-      items.push({
-        field: "Date_production",
-        operator: ">=",
-        value: f.Date_from.trim(),
-      });
-    }
-
-    if (f.Date_to.trim()) {
-      items.push({
-        field: "Date_production",
-        operator: "<=",
-        value: f.Date_to.trim(),
-      });
-    }
-
-    if (f.Quantite_min.trim()) {
-      items.push({
-        field: "Quantite",
-        operator: ">=",
-        value: f.Quantite_min.trim(),
-      });
-    }
-
-    if (f.Quantite_max.trim()) {
-      items.push({
-        field: "Quantite",
-        operator: "<=",
-        value: f.Quantite_max.trim(),
-      });
-    }
-
-    return { items };
-  };
-
   const applyFilterFormToRows = (
     all: EntreeRow[],
     f: FilterForm
@@ -819,24 +732,32 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
     });
   };
 
+  const displayRows = React.useMemo(() => {
+    if (!hasAnyMultiFilter(activeFilterForm)) {
+      return rows;
+    }
+
+    return applyFilterFormToRows(rows, activeFilterForm);
+  }, [rows, activeFilterForm]);
+
   const openFilterDialog = () => setOpenFilter(true);
 
   const applyFilter = () => {
     if (!hasAnyMultiFilter(filterForm)) {
-      setFilterModel({ items: [] });
+      setActiveFilterForm(emptyFilterForm());
       setOpenFilter(false);
       setInfo("Filter cleared.");
       return;
     }
 
-    setFilterModel(buildFilterModelFromForm(filterForm));
+    setActiveFilterForm({ ...filterForm });
     setOpenFilter(false);
     setInfo("Filter applied.");
   };
 
   const clearFilter = () => {
     setFilterForm(emptyFilterForm());
-    setFilterModel({ items: [] });
+    setActiveFilterForm(emptyFilterForm());
     setInfo("Filter cleared.");
   };
 
@@ -916,14 +837,14 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
     setInfo("");
     setErrorMessages([]);
 
-    if (!hasAnyMultiFilter(filterForm)) {
+    if (!hasAnyMultiFilter(activeFilterForm)) {
       setErrorMessages([
-        "Please click Filter and filter the Entrée table first, then click Park.",
+        "Please click Filter and apply a filter to the Entrée table first, then click Park.",
       ]);
       return;
     }
 
-    const targets = applyFilterFormToRows(rows, filterForm);
+    const targets = applyFilterFormToRows(rows, activeFilterForm);
 
     const hasTemp = targets.some((r) => isTempId(r.id));
 
@@ -1118,7 +1039,14 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
             <Chip color="success" label="Saved" />
           )}
 
-          <Chip variant="outlined" label={`Rows: ${rows.length}`} />
+          <Chip
+            variant="outlined"
+            label={
+              hasAnyMultiFilter(activeFilterForm)
+                ? `Rows: ${displayRows.length}/${rows.length}`
+                : `Rows: ${rows.length}`
+            }
+          />
 
           {loading ? (
             <Chip color="info" label="Loading..." />
@@ -1246,7 +1174,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         <Box sx={{ height: 640, width: "100%" }}>
           <DataGrid
             apiRef={apiRef}
-            rows={rows}
+            rows={displayRows}
             columns={columns}
             getRowId={(r) => r.id}
             initialState={{ density: "compact" }}
@@ -1255,8 +1183,6 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
             disableRowSelectionOnClick
             rowSelectionModel={selectedRowIds}
             onRowSelectionModelChange={(m) => setSelectedRowIds(m as any)}
-            filterModel={filterModel}
-            onFilterModelChange={(m) => setFilterModel(m)}
             loading={loading}
             slots={{ toolbar: GridToolbar }}
             slotProps={{ toolbar: { showQuickFilter: false } as any }}
