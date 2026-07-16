@@ -740,7 +740,11 @@ export default function PointagePage() {
             </Stack>
 
             <Stack direction="row" spacing={1}>
-              <Button variant="outlined" href="/modules">
+              <Button variant="outlined" href="/hr">
+                HR
+              </Button>
+
+              <Button variant="text" href="/modules">
                 Modules
               </Button>
 

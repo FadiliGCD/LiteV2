@@ -2,17 +2,18 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import RequireAuth from "./auth/RequireAuth";
 import RequireModule from "./auth/RequireModule";
+import RequireHrAccess from "./auth/RequireHrAccess";
 import AppLayout from "./layouts/AppLayout";
 
 import LoginPage from "./pages/LoginPage";
 import ModulesPage from "./pages/ModulesPage";
+import HrPage from "./pages/HrPage";
 import DashboardPage from "./pages/DashboardPage";
 import EntreePage from "./pages/EntreePage";
 import ParkingPage from "./pages/ParkingPage";
 import SortiePage from "./pages/SortiePage";
 import RapportDeChargePage from "./pages/RapportDeChargePage";
 import PointagePage from "./pages/PointagePage";
-
 
 export default function App() {
   return (
@@ -51,14 +52,33 @@ export default function App() {
         </Route>
 
         <Route
-          path="/pointage"
+          path="/hr"
           element={
             <RequireAuth>
-              <RequireModule moduleKey="pointage">
-                <PointagePage />
+              <RequireModule moduleKey="hr">
+                <HrPage />
               </RequireModule>
             </RequireAuth>
           }
+        />
+
+        <Route
+          path="/hr/pointage"
+          element={
+            <RequireAuth>
+              <RequireModule moduleKey="hr">
+                <RequireHrAccess accessKey="pointage">
+                  <PointagePage />
+                </RequireHrAccess>
+              </RequireModule>
+            </RequireAuth>
+          }
+        />
+
+        {/* old pointage route redirected to new HR route */}
+        <Route
+          path="/pointage"
+          element={<Navigate to="/hr/pointage" replace />}
         />
 
         <Route path="/" element={<Navigate to="/modules" replace />} />

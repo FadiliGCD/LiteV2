@@ -3,37 +3,37 @@ import { Navigate } from "react-router-dom";
 import { Box, CircularProgress, Stack, Typography } from "@mui/material";
 import { supabase } from "../lib/supabaseClient";
 
-type ModuleKey =
-  | "reception"
-  | "production"
-  | "stock"
-  | "accounting"
-  | "hr";
+type HrAccessKey =
+  | "pointage"
+  | "employees"
+  | "contracts"
+  | "planning"
+  | "payroll";
 
 type ProfileRow = {
   role: string | null;
-  module_access: string[] | null;
+  hr_access: string[] | null;
+  can_manage_hr: boolean | null;
 };
 
-function hasAccess(profile: ProfileRow | null, moduleKey: ModuleKey) {
+function hasHrAccess(profile: ProfileRow | null, accessKey: HrAccessKey) {
   if (!profile) return false;
 
   const role = String(profile.role ?? "").toLowerCase();
 
   if (role === "superuser") return true;
+  if (profile.can_manage_hr === true) return true;
 
-  const access = Array.isArray(profile.module_access)
-    ? profile.module_access
-    : [];
+  const access = Array.isArray(profile.hr_access) ? profile.hr_access : [];
 
-  return access.includes(moduleKey);
+  return access.includes(accessKey);
 }
 
-export default function RequireModule({
-  moduleKey,
+export default function RequireHrAccess({
+  accessKey,
   children,
 }: {
-  moduleKey: ModuleKey;
+  accessKey: HrAccessKey;
   children: React.ReactNode;
 }) {
   const [status, setStatus] = React.useState<
@@ -56,13 +56,13 @@ export default function RequireModule({
 
         const { data, error } = await supabase
           .from("profiles")
-          .select("role, module_access")
+          .select("role, hr_access, can_manage_hr")
           .eq("id", user.id)
           .maybeSingle();
 
         if (error) throw new Error(error.message);
 
-        const allowed = hasAccess((data ?? null) as ProfileRow | null, moduleKey);
+        const allowed = hasHrAccess((data ?? null) as ProfileRow | null, accessKey);
 
         if (mounted) {
           setStatus(allowed ? "allowed" : "denied");
@@ -77,7 +77,7 @@ export default function RequireModule({
     return () => {
       mounted = false;
     };
-  }, [moduleKey]);
+  }, [accessKey]);
 
   if (status === "checking") {
     return (
@@ -85,7 +85,7 @@ export default function RequireModule({
         <Stack spacing={2} alignItems="center">
           <CircularProgress />
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Vérification des permissions...
+            Vérification des permissions HR...
           </Typography>
         </Stack>
       </Box>
@@ -93,7 +93,7 @@ export default function RequireModule({
   }
 
   if (status === "denied") {
-    return <Navigate to="/modules" replace />;
+    return <Navigate to="/hr" replace />;
   }
 
   return <>{children}</>;

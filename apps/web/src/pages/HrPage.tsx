@@ -11,18 +11,17 @@ import {
   Typography,
 } from "@mui/material";
 import AppFooter from "../components/AppFooter";
-import { getSession, signOut } from "../auth/auth";
 import { supabase } from "../lib/supabaseClient";
 
-type ModuleKey =
-  | "reception"
-  | "production"
-  | "stock"
-  | "accounting"
-  | "hr";
+type HrAccessKey =
+  | "pointage"
+  | "employees"
+  | "contracts"
+  | "planning"
+  | "payroll";
 
-type ModuleCard = {
-  key: ModuleKey;
+type HrSubModule = {
+  key: HrAccessKey;
   title: string;
   description: string;
   shortName: string;
@@ -32,124 +31,110 @@ type ModuleCard = {
 
 type ProfileRow = {
   role: string | null;
-  module_access: string[] | null;
+  hr_access: string[] | null;
+  can_manage_hr: boolean | null;
 };
 
-const MODULES: ModuleCard[] = [
+const HR_MODULES: HrSubModule[] = [
   {
-    key: "reception",
-    title: "Reception",
+    key: "pointage",
+    title: "Pointage",
     description:
-      "Gestion de la réception des marchandises, fournisseurs et contrôles d'arrivée.",
-    shortName: "RC",
-    available: false,
-  },
-  {
-    key: "production",
-    title: "Production",
-    description:
-      "Suivi des opérations de production, transformation et rendement.",
-    shortName: "PR",
-    available: false,
-  },
-  {
-    key: "stock",
-    title: "Gestion de stock",
-    description:
-      "Gestion des entrées, réservations, sorties et rapports de charge.",
-    shortName: "GS",
-    path: "/stock",
+      "Journal de pointage des employés : entrées, sorties, pauses et heures.",
+    shortName: "PT",
+    path: "/hr/pointage",
     available: true,
   },
   {
-    key: "accounting",
-    title: "Comptabilité",
+    key: "employees",
+    title: "Dossiers employés",
     description:
-      "Gestion financière, règlements, facturation et suivi comptable.",
-    shortName: "CP",
+      "Gestion des informations employés, documents, postes et départements.",
+    shortName: "EM",
     available: false,
   },
   {
-    key: "hr",
-    title: "HR",
+    key: "contracts",
+    title: "Contrats",
     description:
-      "Gestion des employés, présences, pointage, horaires et ressources humaines.",
-    shortName: "HR",
-    path: "/hr",
-    available: true,
+      "Suivi des contrats, documents RH et informations administratives.",
+    shortName: "CT",
+    available: false,
+  },
+  {
+    key: "planning",
+    title: "Planning",
+    description:
+      "Gestion des horaires, équipes, absences et organisation du travail.",
+    shortName: "PL",
+    available: false,
+  },
+  {
+    key: "payroll",
+    title: "Paie",
+    description:
+      "Préparation des heures, calculs RH et exports pour la paie.",
+    shortName: "PY",
+    available: false,
   },
 ];
 
-function getVisibleModules(profile: ProfileRow | null) {
+function getVisibleHrModules(profile: ProfileRow | null) {
   if (!profile) return [];
 
   const role = String(profile.role ?? "").toLowerCase();
 
-  if (role === "superuser") {
-    return MODULES;
+  if (role === "superuser" || profile.can_manage_hr === true) {
+    return HR_MODULES;
   }
 
-  const access = Array.isArray(profile.module_access)
-    ? profile.module_access
-    : [];
+  const access = Array.isArray(profile.hr_access) ? profile.hr_access : [];
 
-  return MODULES.filter((module) => access.includes(module.key));
+  return HR_MODULES.filter((module) => access.includes(module.key));
 }
 
-export default function ModulesPage() {
+export default function HrPage() {
   const navigate = useNavigate();
 
-  const [sessionLabel, setSessionLabel] = React.useState("");
-  const [message, setMessage] = React.useState("");
   const [profile, setProfile] = React.useState<ProfileRow | null>(null);
-  const [loadingProfile, setLoadingProfile] = React.useState(true);
+  const [loading, setLoading] = React.useState(true);
+  const [message, setMessage] = React.useState("");
 
   React.useEffect(() => {
     let mounted = true;
 
-    const loadSession = async () => {
-      setLoadingProfile(true);
+    const loadProfile = async () => {
+      setLoading(true);
 
       try {
-        const session = await getSession();
-
         const {
           data: { user },
         } = await supabase.auth.getUser();
 
-        if (!mounted) return;
-
-        if (session) {
-          setSessionLabel(`${session.user.email} • ${session.role}`);
-        }
-
         if (!user) {
-          setProfile(null);
+          if (mounted) setProfile(null);
           return;
         }
 
         const { data, error } = await supabase
           .from("profiles")
-          .select("role, module_access")
+          .select("role, hr_access, can_manage_hr")
           .eq("id", user.id)
           .maybeSingle();
 
         if (error) throw new Error(error.message);
 
-        setProfile({
-          role: String(data?.role ?? session?.role ?? "user"),
-          module_access: Array.isArray(data?.module_access)
-            ? data.module_access
-            : [],
-        });
+        if (mounted) {
+          setProfile((data ?? null) as ProfileRow | null);
+        }
       } catch {
-        setProfile(null);
+        if (mounted) setProfile(null);
       } finally {
-        if (mounted) setLoadingProfile(false);
+        if (mounted) setLoading(false);
       }
     };
 
-    loadSession();
+    loadProfile();
 
     return () => {
       mounted = false;
@@ -157,10 +142,10 @@ export default function ModulesPage() {
   }, []);
 
   const visibleModules = React.useMemo(() => {
-    return getVisibleModules(profile);
+    return getVisibleHrModules(profile);
   }, [profile]);
 
-  const openModule = (module: ModuleCard) => {
+  const openModule = (module: HrSubModule) => {
     setMessage("");
 
     if (!module.available || !module.path) {
@@ -171,14 +156,6 @@ export default function ModulesPage() {
     navigate(module.path);
   };
 
-  const logout = async () => {
-    try {
-      await signOut();
-    } finally {
-      navigate("/login", { replace: true });
-    }
-  };
-
   return (
     <Box
       sx={{
@@ -187,7 +164,7 @@ export default function ModulesPage() {
         flexDirection: "column",
         bgcolor: "#f4f7fb",
         background:
-          "radial-gradient(circle at top left, rgba(31,111,235,0.14), transparent 35%), #f4f7fb",
+          "radial-gradient(circle at top left, rgba(124,58,237,0.12), transparent 35%), #f4f7fb",
       }}
     >
       <Paper
@@ -228,20 +205,28 @@ export default function ModulesPage() {
 
               <Box>
                 <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                  KATASAB Fish Portal
+                  HR Module
                 </Typography>
 
                 <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  Administration centrale
+                  Ressources humaines
                 </Typography>
               </Box>
             </Stack>
 
             <Stack direction="row" spacing={1} alignItems="center">
-              <Chip variant="outlined" label={sessionLabel || "Session active"} />
+              <Chip
+                variant="outlined"
+                label={
+                  String(profile?.role ?? "").toLowerCase() === "superuser" ||
+                  profile?.can_manage_hr
+                    ? "Accès HR complet"
+                    : "Accès HR limité"
+                }
+              />
 
-              <Button variant="outlined" onClick={logout}>
-                Logout
+              <Button variant="outlined" onClick={() => navigate("/modules")}>
+                Modules
               </Button>
             </Stack>
           </Stack>
@@ -267,19 +252,18 @@ export default function ModulesPage() {
               fontSize: { xs: "2rem", md: "2.8rem" },
             }}
           >
-            Sélectionnez un espace
+            Ressources humaines
           </Typography>
 
           <Typography
             variant="body1"
             sx={{
               color: "text.secondary",
-              maxWidth: 760,
+              maxWidth: 780,
             }}
           >
-            Accédez aux différents services de l'entreprise. Les modules
-            disponibles dépendent du rôle et des permissions de chaque
-            utilisateur.
+            Sélectionnez un sous-module RH. L'accès dépend du rôle et des
+            permissions de l'utilisateur.
           </Typography>
         </Stack>
 
@@ -289,7 +273,7 @@ export default function ModulesPage() {
           </Alert>
         ) : null}
 
-        {loadingProfile ? (
+        {loading ? (
           <Paper
             variant="outlined"
             sx={{
@@ -303,13 +287,13 @@ export default function ModulesPage() {
               <CircularProgress />
 
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                Chargement des modules...
+                Chargement des accès HR...
               </Typography>
             </Stack>
           </Paper>
         ) : visibleModules.length === 0 ? (
           <Alert severity="warning">
-            Aucun module n'est disponible pour cet utilisateur.
+            Aucun sous-module HR n'est disponible pour cet utilisateur.
           </Alert>
         ) : (
           <Box
@@ -325,7 +309,7 @@ export default function ModulesPage() {
           >
             {visibleModules.map((module) => (
               <Paper
-                key={module.title}
+                key={module.key}
                 elevation={0}
                 onClick={() => openModule(module)}
                 sx={{
@@ -358,7 +342,7 @@ export default function ModulesPage() {
                     right: -60,
                     top: -60,
                     bgcolor: module.available
-                      ? "rgba(25,118,210,0.10)"
+                      ? "rgba(124,58,237,0.10)"
                       : "rgba(100,116,139,0.08)",
                   }}
                 />
@@ -427,7 +411,7 @@ export default function ModulesPage() {
                       openModule(module);
                     }}
                   >
-                    {module.available ? "Ouvrir le module" : "Coming soon"}
+                    {module.available ? "Ouvrir" : "Coming soon"}
                   </Button>
                 </Stack>
               </Paper>
