@@ -44,18 +44,63 @@ type PointageRecord = {
   id: string;
   employee_id: string;
   work_date: string;
-  clock_in: string | null;
-  lunch_start: string | null;
-  lunch_end: string | null;
-  clock_out: string | null;
+
+  period_1_in: string | null;
+  period_1_out: string | null;
+  period_2_in: string | null;
+  period_2_out: string | null;
+  period_3_in: string | null;
+  period_3_out: string | null;
+  period_4_in: string | null;
+  period_4_out: string | null;
+  period_5_in: string | null;
+  period_5_out: string | null;
+
+  hour_adjustment: number | null;
+  kitchen_contribution: string | null;
   notes: string | null;
   created_at: string;
 };
 
-type TimeField = "clock_in" | "lunch_start" | "lunch_end" | "clock_out";
+const PERIODS = [
+  {
+    label: "Période I",
+    inField: "period_1_in",
+    outField: "period_1_out",
+  },
+  {
+    label: "Période II",
+    inField: "period_2_in",
+    outField: "period_2_out",
+  },
+  {
+    label: "Période III",
+    inField: "period_3_in",
+    outField: "period_3_out",
+  },
+  {
+    label: "Période IV",
+    inField: "period_4_in",
+    outField: "period_4_out",
+  },
+  {
+    label: "Période V",
+    inField: "period_5_in",
+    outField: "period_5_out",
+  },
+] as const;
+
+type PeriodInField = (typeof PERIODS)[number]["inField"];
+type PeriodOutField = (typeof PERIODS)[number]["outField"];
+type PeriodTimeField = PeriodInField | PeriodOutField;
 
 function todayISO() {
   return dayjs().format("YYYY-MM-DD");
+}
+
+function safeNum(value: unknown, fallback = 0) {
+  const number = Number(String(value ?? "").replace(",", "."));
+  return Number.isFinite(number) ? number : fallback;
 }
 
 function formatTime(value: string | null | undefined) {
@@ -70,7 +115,27 @@ function formatDateTime(value: string | null | undefined) {
   return date.isValid() ? date.format("DD/MM/YYYY HH:mm") : "—";
 }
 
-function dateAndTimeToIso(dateText: string, timeText: string) {
+function formatHourNumber(value: number) {
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function parseHourInput(value: string) {
+  const cleaned = value.trim().replace(",", ".");
+
+  if (!cleaned) return 0;
+
+  const number = Number(cleaned);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function dateAndTimeToIso(
+  dateText: string,
+  timeText: string,
+  startIsoForOut?: string | null
+) {
   if (!dateText || !timeText) return null;
 
   const [hours, minutes] = timeText.split(":").map(Number);
@@ -79,77 +144,96 @@ function dateAndTimeToIso(dateText: string, timeText: string) {
     return null;
   }
 
-  return dayjs(dateText)
+  let result = dayjs(dateText)
     .hour(hours)
     .minute(minutes)
     .second(0)
-    .millisecond(0)
-    .toDate()
-    .toISOString();
+    .millisecond(0);
+
+  if (startIsoForOut) {
+    const start = dayjs(startIsoForOut);
+
+    if (start.isValid() && result.isBefore(start)) {
+      result = result.add(1, "day");
+    }
+  }
+
+  return result.toDate().toISOString();
 }
 
-function nowForSelectedDateIso(dateText: string) {
+function nowForSelectedDateIso(
+  dateText: string,
+  startIsoForOut?: string | null
+) {
   const now = dayjs();
 
-  return dayjs(dateText)
+  let result = dayjs(dateText)
     .hour(now.hour())
     .minute(now.minute())
     .second(now.second())
-    .millisecond(0)
-    .toDate()
-    .toISOString();
-}
+    .millisecond(0);
 
-function minutesBetween(
-  start: string | null,
-  end: string | null,
-  selectedDate: string
-) {
-  if (!start) return null;
+  if (startIsoForOut) {
+    const start = dayjs(startIsoForOut);
 
-  const startDate = dayjs(start);
-
-  if (!startDate.isValid()) return null;
-
-  let endDate: dayjs.Dayjs | null = null;
-
-  if (end) {
-    const parsedEnd = dayjs(end);
-    if (parsedEnd.isValid()) endDate = parsedEnd;
-  } else if (selectedDate === todayISO()) {
-    endDate = dayjs();
+    if (start.isValid() && result.isBefore(start)) {
+      result = result.add(1, "day");
+    }
   }
 
-  if (!endDate || endDate.isBefore(startDate)) return null;
-
-  return endDate.diff(startDate, "minute");
+  return result.toDate().toISOString();
 }
 
-function formatDuration(minutes: number | null) {
-  if (minutes === null || !Number.isFinite(minutes)) return "—";
+function periodMinutes(
+  startValue: string | null,
+  endValue: string | null,
+  selectedDate: string
+) {
+  if (!startValue) return 0;
 
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
+  const start = dayjs(startValue);
 
-  if (h <= 0) return `${m}min`;
-  if (m <= 0) return `${h}h`;
+  if (!start.isValid()) return 0;
 
-  return `${h}h ${m}min`;
+  let end: dayjs.Dayjs | null = null;
+
+  if (endValue) {
+    end = dayjs(endValue);
+
+    if (end.isValid() && end.isBefore(start)) {
+      end = end.add(1, "day");
+    }
+  } else if (selectedDate === todayISO()) {
+    end = dayjs();
+  }
+
+  if (!end || !end.isValid() || end.isBefore(start)) {
+    return 0;
+  }
+
+  return end.diff(start, "minute");
 }
 
-function getStatus(record: PointageRecord) {
-  if (!record.clock_in) return "Pas commencé";
-  if (record.clock_out) return "Sorti";
-  if (record.lunch_start && !record.lunch_end) return "Pause déjeuner";
-  if (record.lunch_start && record.lunch_end) return "Présent après pause";
-  return "Présent";
+function workedMinutes(record: PointageRecord | undefined, selectedDate: string) {
+  if (!record) return 0;
+
+  return PERIODS.reduce((total, period) => {
+    return (
+      total +
+      periodMinutes(
+        record[period.inField],
+        record[period.outField],
+        selectedDate
+      )
+    );
+  }, 0);
 }
 
-function statusColor(status: string) {
-  if (status === "Sorti") return "default";
-  if (status === "Pause déjeuner") return "warning";
-  if (status === "Présent" || status === "Présent après pause") return "success";
-  return "default";
+function totalHours(record: PointageRecord | undefined, selectedDate: string) {
+  const worked = workedMinutes(record, selectedDate) / 60;
+  const adjustment = safeNum(record?.hour_adjustment, 0);
+
+  return worked + adjustment;
 }
 
 function employeeLabel(employee: EmployeeRow) {
@@ -157,6 +241,37 @@ function employeeLabel(employee: EmployeeRow) {
   const department = employee.department ? ` • ${employee.department}` : "";
 
   return `${employee.full_name}${code}${department}`;
+}
+
+function findNextInField(record: PointageRecord | undefined) {
+  for (const period of PERIODS) {
+    if (!record?.[period.inField]) {
+      return period.inField;
+    }
+
+    if (record?.[period.inField] && !record?.[period.outField]) {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function findOpenOutField(record: PointageRecord | undefined) {
+  if (!record) return null;
+
+  for (let i = PERIODS.length - 1; i >= 0; i -= 1) {
+    const period = PERIODS[i];
+
+    if (record[period.inField] && !record[period.outField]) {
+      return {
+        outField: period.outField,
+        startIso: record[period.inField],
+      };
+    }
+  }
+
+  return null;
 }
 
 export default function PointagePage() {
@@ -194,20 +309,9 @@ export default function PointagePage() {
       );
   }, [employees]);
 
-  const employeeMap = React.useMemo(() => {
-    return new Map(employees.map((employee) => [employee.id, employee]));
-  }, [employees]);
-
-  const tableRows = React.useMemo(() => {
-    return [...records].sort((a, b) => {
-      const employeeA = employeeMap.get(a.employee_id)?.full_name ?? "";
-      const employeeB = employeeMap.get(b.employee_id)?.full_name ?? "";
-
-      return employeeA.localeCompare(employeeB, "fr", {
-        sensitivity: "base",
-      });
-    });
-  }, [records, employeeMap]);
+  const recordMap = React.useMemo(() => {
+    return new Map(records.map((record) => [record.employee_id, record]));
+  }, [records]);
 
   const loadPointage = React.useCallback(async () => {
     setLoading(true);
@@ -241,7 +345,7 @@ export default function PointagePage() {
           supabase
             .from("pointage_records")
             .select(
-              "id, employee_id, work_date, clock_in, lunch_start, lunch_end, clock_out, notes, created_at"
+              "id, employee_id, work_date, period_1_in, period_1_out, period_2_in, period_2_out, period_3_in, period_3_out, period_4_in, period_4_out, period_5_in, period_5_out, hour_adjustment, kitchen_contribution, notes, created_at"
             )
             .eq("work_date", selectedDate)
             .order("created_at", { ascending: false }),
@@ -267,7 +371,85 @@ export default function PointagePage() {
     loadPointage();
   }, [loadPointage]);
 
-  const clockAction = async (field: TimeField) => {
+  const upsertRecord = async (
+    employee: EmployeeRow,
+    changes: Record<string, unknown>
+  ) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) throw new Error("Session not found.");
+
+    const existing = recordMap.get(employee.id);
+
+    const payload: Record<string, unknown> = {
+      employee_id: employee.id,
+      work_date: selectedDate,
+      ...changes,
+      updated_at: new Date().toISOString(),
+      updated_by: user.id,
+    };
+
+    if (!existing) {
+      payload.created_by = user.id;
+    }
+
+    const { error: upsertError } = await supabase
+      .from("pointage_records")
+      .upsert(payload, {
+        onConflict: "employee_id,work_date",
+      });
+
+    if (upsertError) throw new Error(upsertError.message);
+  };
+
+  const clockInLikeAction = async (
+    employee: EmployeeRow,
+    label: string
+  ) => {
+    const existing = recordMap.get(employee.id);
+    const field = findNextInField(existing);
+
+    if (!field) {
+      throw new Error(
+        "Impossible d'ajouter une entrée. Une période est déjà ouverte ou les 5 périodes sont utilisées."
+      );
+    }
+
+    await upsertRecord(employee, {
+      [field]: nowForSelectedDateIso(selectedDate),
+    });
+
+    setInfo(`${label} enregistré pour ${employee.full_name}.`);
+  };
+
+  const clockOutLikeAction = async (
+    employee: EmployeeRow,
+    label: string
+  ) => {
+    const existing = recordMap.get(employee.id);
+    const openPeriod = findOpenOutField(existing);
+
+    if (!openPeriod) {
+      throw new Error(
+        "Aucune période ouverte. Enregistrez d'abord une entrée."
+      );
+    }
+
+    await upsertRecord(employee, {
+      [openPeriod.outField]: nowForSelectedDateIso(
+        selectedDate,
+        openPeriod.startIso
+      ),
+    });
+
+    setInfo(`${label} enregistré pour ${employee.full_name}.`);
+  };
+
+  const handleAction = async (
+    action: "clock_in" | "lunch_start" | "lunch_end" | "clock_out"
+  ) => {
     setInfo("");
     setError("");
 
@@ -279,91 +461,60 @@ export default function PointagePage() {
     setSaving(true);
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) throw new Error("Session not found.");
-
-      const existing = records.find(
-        (record) => record.employee_id === selectedEmployee.id
-      );
-
-      const nowIso = nowForSelectedDateIso(selectedDate);
-
-      const payload: Record<string, unknown> = {
-        employee_id: selectedEmployee.id,
-        work_date: selectedDate,
-        [field]: nowIso,
-        updated_at: new Date().toISOString(),
-        updated_by: user.id,
-      };
-
-      if (!existing) {
-        payload.created_by = user.id;
+      if (action === "clock_in") {
+        await clockInLikeAction(selectedEmployee, "Entrée");
       }
 
-      const { error: upsertError } = await supabase
-        .from("pointage_records")
-        .upsert(payload, {
-          onConflict: "employee_id,work_date",
-        });
+      if (action === "lunch_start") {
+        await clockOutLikeAction(selectedEmployee, "Début pause");
+      }
 
-      if (upsertError) throw new Error(upsertError.message);
+      if (action === "lunch_end") {
+        await clockInLikeAction(selectedEmployee, "Fin pause");
+      }
+
+      if (action === "clock_out") {
+        await clockOutLikeAction(selectedEmployee, "Sortie");
+      }
 
       await loadPointage();
-
-      const actionLabel =
-        field === "clock_in"
-          ? "Entrée enregistrée"
-          : field === "lunch_start"
-          ? "Début pause enregistré"
-          : field === "lunch_end"
-          ? "Fin pause enregistrée"
-          : "Sortie enregistrée";
-
-      setInfo(`${actionLabel} pour ${selectedEmployee.full_name}.`);
-    } catch (clockError: any) {
-      setError(clockError?.message ?? "Action failed.");
+    } catch (actionError: any) {
+      setError(actionError?.message ?? "Action failed.");
     } finally {
       setSaving(false);
     }
   };
 
   const updateRecordTime = async (
-    record: PointageRecord,
-    field: TimeField,
+    employee: EmployeeRow,
+    record: PointageRecord | undefined,
+    field: PeriodTimeField,
     timeText: string
   ) => {
     setInfo("");
     setError("");
-
-    const isoValue = timeText
-      ? dateAndTimeToIso(selectedDate, timeText)
-      : null;
-
     setSaving(true);
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const period = PERIODS.find(
+        (p) => p.inField === field || p.outField === field
+      );
 
-      if (!user) throw new Error("Session not found.");
+      const startIsoForOut =
+        period && period.outField === field && record
+          ? record[period.inField]
+          : null;
 
-      const { error: updateError } = await supabase
-        .from("pointage_records")
-        .update({
-          [field]: isoValue,
-          updated_at: new Date().toISOString(),
-          updated_by: user.id,
-        })
-        .eq("id", record.id);
+      const isoValue = timeText
+        ? dateAndTimeToIso(selectedDate, timeText, startIsoForOut)
+        : null;
 
-      if (updateError) throw new Error(updateError.message);
+      await upsertRecord(employee, {
+        [field]: isoValue,
+      });
 
       await loadPointage();
-      setInfo("Ligne mise à jour.");
+      setInfo("Horaire mis à jour.");
     } catch (updateError: any) {
       setError(updateError?.message ?? "Update failed.");
     } finally {
@@ -371,31 +522,43 @@ export default function PointagePage() {
     }
   };
 
-  const updateRecordNotes = async (record: PointageRecord, notes: string) => {
+  const updateAdjustment = async (
+    employee: EmployeeRow,
+    value: string
+  ) => {
     setInfo("");
     setError("");
     setSaving(true);
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) throw new Error("Session not found.");
-
-      const { error: updateError } = await supabase
-        .from("pointage_records")
-        .update({
-          notes: notes.trim() || null,
-          updated_at: new Date().toISOString(),
-          updated_by: user.id,
-        })
-        .eq("id", record.id);
-
-      if (updateError) throw new Error(updateError.message);
+      await upsertRecord(employee, {
+        hour_adjustment: parseHourInput(value),
+      });
 
       await loadPointage();
-      setInfo("Notes mises à jour.");
+      setInfo("+ Hr / - Hr mis à jour.");
+    } catch (updateError: any) {
+      setError(updateError?.message ?? "Update failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateKitchenContribution = async (
+    employee: EmployeeRow,
+    value: string
+  ) => {
+    setInfo("");
+    setError("");
+    setSaving(true);
+
+    try {
+      await upsertRecord(employee, {
+        kitchen_contribution: value.trim() || null,
+      });
+
+      await loadPointage();
+      setInfo("Cotisation cuisine mise à jour.");
     } catch (updateError: any) {
       setError(updateError?.message ?? "Update failed.");
     } finally {
@@ -493,6 +656,34 @@ export default function PointagePage() {
     }
   };
 
+  const headerCellSx = {
+    bgcolor: "#8cc63f",
+    color: "#111827",
+    fontWeight: 900,
+    border: "1px solid #2f3a2f",
+    whiteSpace: "nowrap",
+  };
+
+  const subHeaderCellSx = {
+    bgcolor: "#d7e8b5",
+    color: "#111827",
+    fontWeight: 800,
+    border: "1px solid #2f3a2f",
+    whiteSpace: "nowrap",
+  };
+
+  const periodCellSx = {
+    bgcolor: "#f1efe3",
+    border: "1px solid #9ca3af",
+    p: 0.5,
+  };
+
+  const totalCellSx = {
+    bgcolor: "#c5bb92",
+    border: "1px solid #6b654e",
+    fontWeight: 900,
+  };
+
   return (
     <Box
       sx={{
@@ -513,7 +704,7 @@ export default function PointagePage() {
       >
         <Box
           sx={{
-            maxWidth: 1500,
+            maxWidth: 1600,
             mx: "auto",
             px: { xs: 2, md: 4 },
             py: 1.5,
@@ -543,7 +734,7 @@ export default function PointagePage() {
                 </Typography>
 
                 <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  Entrées, sorties et pauses des employés
+                  Journal quotidien des entrées, sorties et pauses
                 </Typography>
               </Box>
             </Stack>
@@ -553,7 +744,11 @@ export default function PointagePage() {
                 Modules
               </Button>
 
-              <Button variant="contained" onClick={loadPointage} disabled={loading}>
+              <Button
+                variant="contained"
+                onClick={loadPointage}
+                disabled={loading}
+              >
                 Actualiser
               </Button>
             </Stack>
@@ -566,7 +761,7 @@ export default function PointagePage() {
         sx={{
           flex: 1,
           width: "100%",
-          maxWidth: 1500,
+          maxWidth: 1600,
           mx: "auto",
           px: { xs: 2, md: 4 },
           py: 4,
@@ -580,25 +775,25 @@ export default function PointagePage() {
             spacing={2}
           >
             <Box>
-              <Typography
-                variant="h4"
-                sx={{
-                  fontWeight: 900,
-                }}
-              >
-                Pointage des employés
+              <Typography variant="h4" sx={{ fontWeight: 900 }}>
+                Journal de pointage
               </Typography>
 
-              <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
-                Sélectionnez une date, recherchez un employé, puis enregistrez
-                son entrée, sa pause ou sa sortie.
+              <Typography
+                variant="body2"
+                sx={{ color: "text.secondary", mt: 0.5 }}
+              >
+                Structure basée sur l'ancien journal PDF, avec la logique de
+                pointage moderne dans l'application.
               </Typography>
             </Box>
 
             <Stack direction="row" spacing={1} alignItems="center">
               <Chip
                 color={canManageEmployees ? "success" : "default"}
-                label={canManageEmployees ? "Admin pointage" : "Utilisateur pointage"}
+                label={
+                  canManageEmployees ? "Admin pointage" : "Utilisateur pointage"
+                }
               />
 
               {saving ? <Chip color="info" label="Sauvegarde..." /> : null}
@@ -630,7 +825,9 @@ export default function PointagePage() {
                   value={selectedEmployee}
                   onChange={(_, value) => setSelectedEmployee(value)}
                   getOptionLabel={(option) => employeeLabel(option)}
-                  isOptionEqualToValue={(option, value) => option.id === value.id}
+                  isOptionEqualToValue={(option, value) =>
+                    option.id === value.id
+                  }
                   renderInput={(params) => (
                     <TextField
                       {...params}
@@ -656,7 +853,7 @@ export default function PointagePage() {
               <Stack direction="row" spacing={1} flexWrap="wrap">
                 <Button
                   variant="contained"
-                  onClick={() => clockAction("clock_in")}
+                  onClick={() => handleAction("clock_in")}
                   disabled={!selectedEmployee || saving}
                 >
                   Entrée
@@ -665,7 +862,7 @@ export default function PointagePage() {
                 <Button
                   variant="outlined"
                   color="warning"
-                  onClick={() => clockAction("lunch_start")}
+                  onClick={() => handleAction("lunch_start")}
                   disabled={!selectedEmployee || saving}
                 >
                   Début pause
@@ -674,7 +871,7 @@ export default function PointagePage() {
                 <Button
                   variant="outlined"
                   color="success"
-                  onClick={() => clockAction("lunch_end")}
+                  onClick={() => handleAction("lunch_end")}
                   disabled={!selectedEmployee || saving}
                 >
                   Fin pause
@@ -683,13 +880,372 @@ export default function PointagePage() {
                 <Button
                   variant="contained"
                   color="error"
-                  onClick={() => clockAction("clock_out")}
+                  onClick={() => handleAction("clock_out")}
                   disabled={!selectedEmployee || saving}
                 >
                   Sortie
                 </Button>
               </Stack>
             </Stack>
+          </Paper>
+
+          <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3 }}>
+            <Box
+              sx={{
+                border: "1px solid #111827",
+                bgcolor: "white",
+              }}
+            >
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", md: "240px 1fr" },
+                  borderBottom: "1px solid #111827",
+                }}
+              >
+                <Box
+                  sx={{
+                    p: 1.5,
+                    display: "grid",
+                    placeItems: "center",
+                    borderRight: { md: "1px solid #111827" },
+                  }}
+                >
+                  <Box
+                    component="img"
+                    src="/logo.png"
+                    alt="Logo"
+                    sx={{
+                      height: 70,
+                      width: "auto",
+                      objectFit: "contain",
+                    }}
+                  />
+                </Box>
+
+                <Box>
+                  <Typography
+                    variant="h4"
+                    sx={{
+                      textAlign: "center",
+                      fontWeight: 900,
+                      py: 1.2,
+                      borderBottom: "1px solid #111827",
+                      letterSpacing: 1,
+                    }}
+                  >
+                    JOURNAL DE POINTAGE
+                  </Typography>
+
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: {
+                        xs: "1fr",
+                        md: "repeat(4, 1fr)",
+                      },
+                    }}
+                  >
+                    <Typography sx={{ p: 1, borderRight: "1px solid #111827" }}>
+                      Référence : <strong>FO/RH 08</strong>
+                    </Typography>
+
+                    <Typography sx={{ p: 1, borderRight: "1px solid #111827" }}>
+                      Version : <strong>A</strong>
+                    </Typography>
+
+                    <Typography sx={{ p: 1, borderRight: "1px solid #111827" }}>
+                      Date : <strong>01/05/2016</strong>
+                    </Typography>
+
+                    <Typography sx={{ p: 1 }}>
+                      Page <strong>1 sur 1</strong>
+                    </Typography>
+                  </Box>
+                </Box>
+              </Box>
+
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", md: "260px 1fr" },
+                  gap: 2,
+                  p: 1.5,
+                }}
+              >
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Box
+                    sx={{
+                      bgcolor: "#8cc63f",
+                      fontWeight: 900,
+                      px: 1,
+                      py: 0.5,
+                      border: "1px solid #111827",
+                    }}
+                  >
+                    Date
+                  </Box>
+
+                  <Box
+                    sx={{
+                      color: "error.main",
+                      fontWeight: 900,
+                      px: 2,
+                      py: 0.5,
+                      border: "1px solid #111827",
+                      bgcolor: "white",
+                    }}
+                  >
+                    {dayjs(selectedDate).format("DD/MM/YYYY")}
+                  </Box>
+                </Stack>
+
+                <Box
+                  sx={{
+                    bgcolor: "error.main",
+                    color: "white",
+                    fontWeight: 900,
+                    textAlign: "center",
+                    py: 0.7,
+                    border: "1px solid #b91c1c",
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  Traitement
+                </Box>
+              </Box>
+
+              {loading ? (
+                <Stack alignItems="center" spacing={2} sx={{ py: 8 }}>
+                  <CircularProgress />
+
+                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                    Chargement du journal de pointage...
+                  </Typography>
+                </Stack>
+              ) : (
+                <TableContainer sx={{ maxHeight: 720 }}>
+                  <Table stickyHeader size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell rowSpan={2} align="center" sx={headerCellSx}>
+                          N°
+                        </TableCell>
+
+                        <TableCell rowSpan={2} sx={headerCellSx}>
+                          Nom Complet
+                        </TableCell>
+
+                        <TableCell rowSpan={2} align="right" sx={headerCellSx}>
+                          Total
+                        </TableCell>
+
+                        {PERIODS.map((period) => (
+                          <TableCell
+                            key={period.label}
+                            colSpan={2}
+                            align="center"
+                            sx={headerCellSx}
+                          >
+                            {period.label}
+                          </TableCell>
+                        ))}
+
+                        <TableCell rowSpan={2} align="center" sx={headerCellSx}>
+                          + Hr
+                          <br />- Hr
+                        </TableCell>
+
+                        <TableCell rowSpan={2} align="center" sx={headerCellSx}>
+                          Cotisation
+                          <br />
+                          Cuisine
+                        </TableCell>
+                      </TableRow>
+
+                      <TableRow>
+                        {PERIODS.map((period) => (
+                          <React.Fragment key={`${period.label}-sub`}>
+                            <TableCell align="center" sx={subHeaderCellSx}>
+                              Entrée
+                            </TableCell>
+
+                            <TableCell align="center" sx={subHeaderCellSx}>
+                              Sortie
+                            </TableCell>
+                          </React.Fragment>
+                        ))}
+                      </TableRow>
+                    </TableHead>
+
+                    <TableBody>
+                      {activeEmployees.length ? (
+                        activeEmployees.map((employee) => {
+                          const record = recordMap.get(employee.id);
+                          const total = totalHours(record, selectedDate);
+
+                          return (
+                            <TableRow key={employee.id} hover>
+                              <TableCell
+                                align="center"
+                                sx={{
+                                  border: "1px solid #9ca3af",
+                                  fontWeight: 800,
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {employee.employee_code || "—"}
+                              </TableCell>
+
+                              <TableCell
+                                sx={{
+                                  border: "1px solid #9ca3af",
+                                  minWidth: 220,
+                                }}
+                              >
+                                <Typography
+                                  variant="body2"
+                                  sx={{ fontWeight: 900 }}
+                                >
+                                  {employee.full_name}
+                                </Typography>
+
+                                {employee.department ? (
+                                  <Typography
+                                    variant="caption"
+                                    sx={{ color: "text.secondary" }}
+                                  >
+                                    {employee.department}
+                                  </Typography>
+                                ) : null}
+                              </TableCell>
+
+                              <TableCell align="right" sx={totalCellSx}>
+                                {formatHourNumber(total)}
+                              </TableCell>
+
+                              {PERIODS.map((period) => (
+                                <React.Fragment key={`${employee.id}-${period.label}`}>
+                                  <TableCell sx={periodCellSx}>
+                                    <TextField
+                                      type="time"
+                                      size="small"
+                                      value={formatTime(record?.[period.inField])}
+                                      onChange={(event) =>
+                                        updateRecordTime(
+                                          employee,
+                                          record,
+                                          period.inField,
+                                          event.target.value
+                                        )
+                                      }
+                                      inputProps={{ step: 60 }}
+                                      sx={{
+                                        width: 95,
+                                        "& input": {
+                                          fontSize: 13,
+                                          p: 0.7,
+                                        },
+                                      }}
+                                    />
+                                  </TableCell>
+
+                                  <TableCell sx={periodCellSx}>
+                                    <TextField
+                                      type="time"
+                                      size="small"
+                                      value={formatTime(record?.[period.outField])}
+                                      onChange={(event) =>
+                                        updateRecordTime(
+                                          employee,
+                                          record,
+                                          period.outField,
+                                          event.target.value
+                                        )
+                                      }
+                                      inputProps={{ step: 60 }}
+                                      sx={{
+                                        width: 95,
+                                        "& input": {
+                                          fontSize: 13,
+                                          p: 0.7,
+                                        },
+                                      }}
+                                    />
+                                  </TableCell>
+                                </React.Fragment>
+                              ))}
+
+                              <TableCell align="center" sx={totalCellSx}>
+                                <TextField
+                                  key={`${employee.id}-${record?.hour_adjustment ?? 0}`}
+                                  size="small"
+                                  defaultValue={formatHourNumber(
+                                    safeNum(record?.hour_adjustment, 0)
+                                  )}
+                                  onBlur={(event) =>
+                                    updateAdjustment(employee, event.target.value)
+                                  }
+                                  sx={{
+                                    width: 90,
+                                    "& input": {
+                                      textAlign: "right",
+                                      fontSize: 13,
+                                      p: 0.7,
+                                      fontWeight: 800,
+                                    },
+                                  }}
+                                />
+                              </TableCell>
+
+                              <TableCell align="center" sx={totalCellSx}>
+                                <TextField
+                                  key={`${employee.id}-${
+                                    record?.kitchen_contribution ?? ""
+                                  }`}
+                                  size="small"
+                                  defaultValue={
+                                    record?.kitchen_contribution ?? ""
+                                  }
+                                  onBlur={(event) =>
+                                    updateKitchenContribution(
+                                      employee,
+                                      event.target.value
+                                    )
+                                  }
+                                  sx={{
+                                    width: 120,
+                                    "& input": {
+                                      fontSize: 13,
+                                      p: 0.7,
+                                    },
+                                  }}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={15}>
+                            <Typography
+                              variant="body2"
+                              sx={{
+                                py: 5,
+                                textAlign: "center",
+                                color: "text.secondary",
+                              }}
+                            >
+                              Aucun employé actif.
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </Box>
           </Paper>
 
           {canManageEmployees ? (
@@ -707,8 +1263,7 @@ export default function PointagePage() {
                   </Typography>
 
                   <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                    Visible par tous les utilisateurs pointage. Modification
-                    réservée aux administrateurs.
+                    Modification réservée aux administrateurs.
                   </Typography>
                 </Box>
 
@@ -779,216 +1334,6 @@ export default function PointagePage() {
               </TableContainer>
             </Paper>
           ) : null}
-
-          <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3 }}>
-            <Stack
-              direction={{ xs: "column", md: "row" }}
-              justifyContent="space-between"
-              alignItems={{ xs: "flex-start", md: "center" }}
-              spacing={1}
-              sx={{ mb: 1.5 }}
-            >
-              <Box>
-                <Typography variant="h6" sx={{ fontWeight: 900 }}>
-                  Données du {dayjs(selectedDate).format("DD/MM/YYYY")}
-                </Typography>
-
-                <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                  Les horaires peuvent être corrigés directement dans le tableau.
-                </Typography>
-              </Box>
-
-              <Chip variant="outlined" label={`${records.length} ligne(s)`} />
-            </Stack>
-
-            <Divider sx={{ mb: 1 }} />
-
-            {loading ? (
-              <Stack alignItems="center" spacing={2} sx={{ py: 8 }}>
-                <CircularProgress />
-
-                <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                  Chargement du pointage...
-                </Typography>
-              </Stack>
-            ) : (
-              <TableContainer sx={{ maxHeight: 560 }}>
-                <Table stickyHeader size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Employé</TableCell>
-                      <TableCell>Entrée</TableCell>
-                      <TableCell>Début pause</TableCell>
-                      <TableCell>Fin pause</TableCell>
-                      <TableCell>Sortie</TableCell>
-                      <TableCell>Temps brut</TableCell>
-                      <TableCell>Pause</TableCell>
-                      <TableCell>Temps net</TableCell>
-                      <TableCell>Status</TableCell>
-                      <TableCell>Notes</TableCell>
-                    </TableRow>
-                  </TableHead>
-
-                  <TableBody>
-                    {tableRows.length ? (
-                      tableRows.map((record) => {
-                        const employee = employeeMap.get(record.employee_id);
-
-                        const grossMinutes = minutesBetween(
-                          record.clock_in,
-                          record.clock_out,
-                          selectedDate
-                        );
-
-                        const lunchMinutes = minutesBetween(
-                          record.lunch_start,
-                          record.lunch_end,
-                          selectedDate
-                        );
-
-                        const netMinutes =
-                          grossMinutes === null
-                            ? null
-                            : grossMinutes - (lunchMinutes ?? 0);
-
-                        const status = getStatus(record);
-
-                        return (
-                          <TableRow key={record.id} hover>
-                            <TableCell sx={{ minWidth: 220 }}>
-                              <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                {employee?.full_name ?? "Employé supprimé"}
-                              </Typography>
-
-                              <Typography
-                                variant="caption"
-                                sx={{ color: "text.secondary" }}
-                              >
-                                {employee?.employee_code || employee?.department
-                                  ? `${employee.employee_code ?? ""} ${
-                                      employee.department
-                                        ? `• ${employee.department}`
-                                        : ""
-                                    }`
-                                  : "—"}
-                              </Typography>
-                            </TableCell>
-
-                            <TableCell sx={{ minWidth: 120 }}>
-                              <TextField
-                                type="time"
-                                size="small"
-                                value={formatTime(record.clock_in)}
-                                onChange={(event) =>
-                                  updateRecordTime(
-                                    record,
-                                    "clock_in",
-                                    event.target.value
-                                  )
-                                }
-                                inputProps={{ step: 60 }}
-                              />
-                            </TableCell>
-
-                            <TableCell sx={{ minWidth: 120 }}>
-                              <TextField
-                                type="time"
-                                size="small"
-                                value={formatTime(record.lunch_start)}
-                                onChange={(event) =>
-                                  updateRecordTime(
-                                    record,
-                                    "lunch_start",
-                                    event.target.value
-                                  )
-                                }
-                                inputProps={{ step: 60 }}
-                              />
-                            </TableCell>
-
-                            <TableCell sx={{ minWidth: 120 }}>
-                              <TextField
-                                type="time"
-                                size="small"
-                                value={formatTime(record.lunch_end)}
-                                onChange={(event) =>
-                                  updateRecordTime(
-                                    record,
-                                    "lunch_end",
-                                    event.target.value
-                                  )
-                                }
-                                inputProps={{ step: 60 }}
-                              />
-                            </TableCell>
-
-                            <TableCell sx={{ minWidth: 120 }}>
-                              <TextField
-                                type="time"
-                                size="small"
-                                value={formatTime(record.clock_out)}
-                                onChange={(event) =>
-                                  updateRecordTime(
-                                    record,
-                                    "clock_out",
-                                    event.target.value
-                                  )
-                                }
-                                inputProps={{ step: 60 }}
-                              />
-                            </TableCell>
-
-                            <TableCell>{formatDuration(grossMinutes)}</TableCell>
-
-                            <TableCell>{formatDuration(lunchMinutes)}</TableCell>
-
-                            <TableCell>
-                              <strong>{formatDuration(netMinutes)}</strong>
-                            </TableCell>
-
-                            <TableCell>
-                              <Chip
-                                size="small"
-                                color={statusColor(status) as any}
-                                label={status}
-                              />
-                            </TableCell>
-
-                            <TableCell sx={{ minWidth: 220 }}>
-                              <TextField
-                                size="small"
-                                defaultValue={record.notes ?? ""}
-                                placeholder="Notes..."
-                                onBlur={(event) =>
-                                  updateRecordNotes(record, event.target.value)
-                                }
-                                fullWidth
-                              />
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={10}>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              py: 5,
-                              textAlign: "center",
-                              color: "text.secondary",
-                            }}
-                          >
-                            Aucun pointage enregistré pour cette date.
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </Paper>
         </Stack>
       </Box>
 
@@ -1013,7 +1358,7 @@ export default function PointagePage() {
             />
 
             <TextField
-              label="Code employé"
+              label="Code employé / N°"
               value={newEmployeeCode}
               onChange={(event) => setNewEmployeeCode(event.target.value)}
               fullWidth
