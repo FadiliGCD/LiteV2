@@ -5,10 +5,10 @@ import { supabase } from "../lib/supabaseClient";
 
 type HrAccessKey =
   | "pointage"
-  | "employees"
-  | "contracts"
-  | "planning"
-  | "payroll";
+  | "main_doeuvre"
+  | "pointage"
+  | "reductions_remunerations"
+  | "paie_declarations";
 
 type ProfileRow = {
   role: string | null;

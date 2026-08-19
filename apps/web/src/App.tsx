@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import MainDoeuvrePage from "./pages/MainDoeuvrePage";
 
 import RequireAuth from "./auth/RequireAuth";
 import RequireModule from "./auth/RequireModule";
@@ -69,6 +70,19 @@ export default function App() {
               <RequireModule moduleKey="hr">
                 <RequireHrAccess accessKey="pointage">
                   <PointagePage />
+                </RequireHrAccess>
+              </RequireModule>
+            </RequireAuth>
+          }
+        />
+
+        <Route
+          path="/hr/main-doeuvre"
+          element={
+            <RequireAuth>
+              <RequireModule moduleKey="hr">
+                <RequireHrAccess accessKey="main_doeuvre">
+                  <MainDoeuvrePage />
                 </RequireHrAccess>
               </RequireModule>
             </RequireAuth>
