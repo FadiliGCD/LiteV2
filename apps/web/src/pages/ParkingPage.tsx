@@ -760,7 +760,7 @@ export default function ParkingPage() {
         <Box>
           <Typography variant="h5">Parking</Typography>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Shared database mode (Supabase). Select a reservation to enable actions.
+            selectioner une réservation pour le modifier, supprimer, ou vendre les produits réservés.
           </Typography>
         </Box>
 

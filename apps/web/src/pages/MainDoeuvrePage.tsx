@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Link } from "react-router-dom";
 import dayjs from "dayjs";
 import {
   Alert,
@@ -27,6 +28,7 @@ import type {
 } from "@mui/x-data-grid";
 
 import AppFooter from "../components/AppFooter";
+import AppHeader from "../components/AppHeader";
 import { supabase } from "../lib/supabaseClient";
 
 type WorkerRow = {
@@ -202,7 +204,7 @@ export default function MainDoeuvrePage() {
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (!user) throw new Error("Session not found.");
+      if (!user) throw new Error("Session introuvable.");
 
       const [profileResult, workersResult] = await Promise.all([
         supabase
@@ -230,7 +232,7 @@ export default function MainDoeuvrePage() {
       setLastSavedRows(uiRows);
       setSelectedRowIds({ type: "include", ids: new Set() } as any);
     } catch (loadError: any) {
-      setError(loadError?.message ?? "Failed to load Main D'œuvre.");
+      setError(loadError?.message ?? "Impossible de charger Main D'œuvre.");
       setRows([]);
       setLastSavedRows([]);
     } finally {
@@ -252,7 +254,7 @@ export default function MainDoeuvrePage() {
       },
       {
         field: "prenom",
-        headerName: "Prenom",
+        headerName: "Prénom",
         width: 170,
         editable: canEdit,
       },
@@ -279,8 +281,8 @@ export default function MainDoeuvrePage() {
       },
       {
         field: "date_naissance",
-        headerName: "Date naissance",
-        width: 150,
+        headerName: "Date de naissance",
+        width: 160,
         editable: canEdit,
       },
       {
@@ -309,7 +311,7 @@ export default function MainDoeuvrePage() {
       },
       {
         field: "rib",
-        headerName: "N rib",
+        headerName: "N° RIB",
         width: 280,
         editable: canEdit,
       },
@@ -330,7 +332,7 @@ export default function MainDoeuvrePage() {
       },
       {
         field: "taux_horaire",
-        headerName: "Taux Horaire",
+        headerName: "Taux horaire",
         width: 150,
         editable: canEdit,
         type: "number",
@@ -338,7 +340,7 @@ export default function MainDoeuvrePage() {
       },
       {
         field: "quanza_fixe",
-        headerName: "Quanza Fixe",
+        headerName: "Quanza fixe",
         width: 160,
         editable: canEdit,
         type: "number",
@@ -371,8 +373,8 @@ export default function MainDoeuvrePage() {
       },
       {
         field: "reste_jour",
-        headerName: "Reste Jour",
-        width: 140,
+        headerName: "Jours restants",
+        width: 150,
         editable: false,
         renderCell: (params) => {
           const value = restDays(params.row.contrat_fin);
@@ -397,7 +399,9 @@ export default function MainDoeuvrePage() {
       quanza_fixe: toNumberOrNull(newRow.quanza_fixe),
     };
 
-    setRows((prev) => prev.map((row) => (row.id === cleaned.id ? cleaned : row)));
+    setRows((prev) =>
+      prev.map((row) => (row.id === cleaned.id ? cleaned : row))
+    );
 
     return cleaned;
   };
@@ -422,7 +426,7 @@ export default function MainDoeuvrePage() {
 
       setInfo("Main D'œuvre sauvegardé.");
     } catch (saveError: any) {
-      setError(saveError?.message ?? "Save failed.");
+      setError(saveError?.message ?? "Impossible de sauvegarder.");
     } finally {
       setSaving(false);
     }
@@ -446,7 +450,7 @@ export default function MainDoeuvrePage() {
     }
 
     if (!draft.prenom.trim() || !draft.nom.trim()) {
-      setError("Prenom et Nom sont obligatoires.");
+      setError("Prénom et nom sont obligatoires.");
       return;
     }
 
@@ -479,7 +483,7 @@ export default function MainDoeuvrePage() {
 
       setInfo("Ouvrier ajouté.");
     } catch (addError: any) {
-      setError(addError?.message ?? "Failed to add worker.");
+      setError(addError?.message ?? "Impossible d'ajouter l'ouvrier.");
     } finally {
       setSaving(false);
     }
@@ -515,7 +519,7 @@ export default function MainDoeuvrePage() {
 
       setInfo("Ouvrier(s) supprimé(s) de la liste active.");
     } catch (deleteError: any) {
-      setError(deleteError?.message ?? "Delete failed.");
+      setError(deleteError?.message ?? "Impossible de supprimer.");
     } finally {
       setSaving(false);
     }
@@ -540,64 +544,21 @@ export default function MainDoeuvrePage() {
         flexDirection: "column",
       }}
     >
-      <Paper
-        square
-        elevation={0}
-        sx={{
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          bgcolor: "rgba(255,255,255,0.95)",
-        }}
-      >
-        <Box
-          sx={{
-            maxWidth: 1500,
-            mx: "auto",
-            px: { xs: 2, md: 4 },
-            py: 1.5,
-          }}
-        >
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            justifyContent="space-between"
-            alignItems={{ xs: "flex-start", sm: "center" }}
-            spacing={2}
-          >
-            <Stack direction="row" spacing={1.5} alignItems="center">
-              <Box
-                component="img"
-                src="/logo.png"
-                alt="Lite V2"
-                sx={{
-                  height: 44,
-                  width: "auto",
-                  objectFit: "contain",
-                }}
-              />
+      <AppHeader
+        title="Main D'œuvre"
+        subtitle="Informations personnelles, salaire et contrats"
+        actions={
+          <>
+            <Button component={Link} to="/hr" variant="outlined">
+              HR
+            </Button>
 
-              <Box>
-                <Typography variant="h6" sx={{ fontWeight: 900 }}>
-                  Main D'œuvre
-                </Typography>
-
-                <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  Informations personnelles, salaire et contrats
-                </Typography>
-              </Box>
-            </Stack>
-
-            <Stack direction="row" spacing={1}>
-              <Button variant="outlined" href="/hr">
-                HR
-              </Button>
-
-              <Button variant="text" href="/modules">
-                Modules
-              </Button>
-            </Stack>
-          </Stack>
-        </Box>
-      </Paper>
+            <Button component={Link} to="/modules" variant="outlined">
+              Modules
+            </Button>
+          </>
+        }
+      />
 
       <Box
         component="main"
@@ -622,7 +583,10 @@ export default function MainDoeuvrePage() {
                 Suivi des ouvriers
               </Typography>
 
-              <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
+              <Typography
+                variant="body2"
+                sx={{ color: "text.secondary", mt: 0.5, lineHeight: 1.7 }}
+              >
                 Les données ajoutées ici alimentent les pages Informations
                 personnelles, Salaire de base, Suivi de contrat et Pointage.
               </Typography>
@@ -803,7 +767,7 @@ export default function MainDoeuvrePage() {
               />
 
               <TextField
-                label="Prenom"
+                label="Prénom"
                 value={draft.prenom}
                 onChange={(e) =>
                   setDraft((p) => ({ ...p, prenom: e.target.value }))
@@ -833,13 +797,13 @@ export default function MainDoeuvrePage() {
                 }
                 fullWidth
               >
-                <MenuItem value="">(empty)</MenuItem>
+                <MenuItem value="">(vide)</MenuItem>
                 <MenuItem value="M">M</MenuItem>
                 <MenuItem value="F">F</MenuItem>
               </TextField>
 
               <TextField
-                label="Date naissance"
+                label="Date de naissance"
                 type="date"
                 value={draft.date_naissance}
                 onChange={(e) =>
@@ -852,7 +816,9 @@ export default function MainDoeuvrePage() {
               <TextField
                 label="CIN"
                 value={draft.cin}
-                onChange={(e) => setDraft((p) => ({ ...p, cin: e.target.value }))}
+                onChange={(e) =>
+                  setDraft((p) => ({ ...p, cin: e.target.value }))
+                }
                 fullWidth
               />
             </Stack>
@@ -881,15 +847,19 @@ export default function MainDoeuvrePage() {
               <TextField
                 label="CNSS"
                 value={draft.cnss}
-                onChange={(e) => setDraft((p) => ({ ...p, cnss: e.target.value }))}
+                onChange={(e) =>
+                  setDraft((p) => ({ ...p, cnss: e.target.value }))
+                }
                 fullWidth
               />
             </Stack>
 
             <TextField
-              label="N rib"
+              label="N° RIB"
               value={draft.rib}
-              onChange={(e) => setDraft((p) => ({ ...p, rib: e.target.value }))}
+              onChange={(e) =>
+                setDraft((p) => ({ ...p, rib: e.target.value }))
+              }
               fullWidth
             />
 
@@ -907,7 +877,7 @@ export default function MainDoeuvrePage() {
               />
 
               <TextField
-                label="Taux Horaire"
+                label="Taux horaire"
                 value={draft.taux_horaire ?? ""}
                 onChange={(e) =>
                   setDraft((p) => ({
@@ -919,7 +889,7 @@ export default function MainDoeuvrePage() {
               />
 
               <TextField
-                label="Quanza Fixe"
+                label="Quanza fixe"
                 value={draft.quanza_fixe ?? ""}
                 onChange={(e) =>
                   setDraft((p) => ({
@@ -933,7 +903,7 @@ export default function MainDoeuvrePage() {
 
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
               <TextField
-                label="Début contrat"
+                label="Début du contrat"
                 type="date"
                 value={draft.contrat_debut}
                 onChange={(e) =>
@@ -944,7 +914,7 @@ export default function MainDoeuvrePage() {
               />
 
               <TextField
-                label="Fin contrat"
+                label="Fin du contrat"
                 type="date"
                 value={draft.contrat_fin}
                 onChange={(e) =>
@@ -958,7 +928,7 @@ export default function MainDoeuvrePage() {
         </DialogContent>
 
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setOpenAdd(false)}>Cancel</Button>
+          <Button onClick={() => setOpenAdd(false)}>Annuler</Button>
 
           <Button variant="contained" onClick={addWorker} disabled={saving}>
             Ajouter

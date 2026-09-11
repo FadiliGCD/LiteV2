@@ -16,6 +16,9 @@ import SortiePage from "./pages/SortiePage";
 import RapportDeChargePage from "./pages/RapportDeChargePage";
 import PointagePage from "./pages/PointagePage";
 
+import RequireSuperuser from "./auth/RequireSuperuser";
+import SettingsPage from "./pages/SettingsPage";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -98,6 +101,17 @@ export default function App() {
         <Route path="/" element={<Navigate to="/modules" replace />} />
 
         <Route path="*" element={<Navigate to="/modules" replace />} />
+
+        <Route
+          path="/settings"
+          element={
+            <RequireAuth>
+              <RequireSuperuser>
+                <SettingsPage />
+              </RequireSuperuser>
+            </RequireAuth>
+          }
+        />
       </Routes>
     </BrowserRouter>
   );

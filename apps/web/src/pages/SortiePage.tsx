@@ -668,7 +668,7 @@ export default function SortiePage() {
           <Typography variant="h5">Sortie</Typography>
 
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Shared database mode (Supabase)
+            base de données des sorties de produits.
           </Typography>
         </Box>
 

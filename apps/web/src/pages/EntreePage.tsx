@@ -1028,7 +1028,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         <Box>
           <Typography variant="h5">Entrée</Typography>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Shared database mode (Supabase)
+            Base de données des entrées de produits.
           </Typography>
         </Box>
 

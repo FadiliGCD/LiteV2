@@ -11,6 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import AppFooter from "../components/AppFooter";
+import AppHeader from "../components/AppHeader";
 import { supabase } from "../lib/supabaseClient";
 
 type HrAccessKey =
@@ -301,7 +302,7 @@ function HrStructureCard({
             onOpen(section);
           }}
         >
-          {section.available ? "Ouvrir" : "Coming soon"}
+          {section.available ? "Ouvrir" : "Bientôt disponible"}
         </Button>
       </Stack>
     </Paper>
@@ -382,71 +383,15 @@ export default function HrPage() {
           "radial-gradient(circle at top left, rgba(31,111,235,0.14), transparent 35%), #f4f7fb",
       }}
     >
-      <Paper
-        square
-        elevation={0}
-        sx={{
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          bgcolor: "rgba(255,255,255,0.92)",
-          backdropFilter: "blur(12px)",
-        }}
-      >
-        <Box
-          sx={{
-            maxWidth: 1500,
-            mx: "auto",
-            px: { xs: 2, md: 4 },
-            py: 1.5,
-          }}
-        >
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            alignItems={{ xs: "flex-start", sm: "center" }}
-            justifyContent="space-between"
-            spacing={2}
-          >
-            <Stack direction="row" spacing={1.5} alignItems="center">
-              <Box
-                component="img"
-                src="/logo.png"
-                alt="Lite V2"
-                sx={{
-                  height: 44,
-                  width: "auto",
-                  objectFit: "contain",
-                }}
-              />
-
-              <Box>
-                <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                  HR Module
-                </Typography>
-
-                <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  Ressources humaines
-                </Typography>
-              </Box>
-            </Stack>
-
-            <Stack direction="row" spacing={1} alignItems="center">
-              <Chip
-                variant="outlined"
-                label={
-                  String(profile?.role ?? "").toLowerCase() === "superuser" ||
-                  profile?.can_manage_hr
-                    ? "Accès HR complet"
-                    : "Accès HR limité"
-                }
-              />
-
-              <Button variant="outlined" onClick={() => navigate("/modules")}>
-                Modules
-              </Button>
-            </Stack>
-          </Stack>
-        </Box>
-      </Paper>
+      <AppHeader
+        title="HR Module"
+        subtitle="Ressources humaines"
+        actions={
+          <Button variant="outlined" onClick={() => navigate("/modules")}>
+            Modules
+          </Button>
+        }
+      />
 
       <Box
         component="main"
@@ -463,7 +408,7 @@ export default function HrPage() {
           <Typography
             variant="h3"
             sx={{
-              fontWeight: 800,
+              fontWeight: 900,
               fontSize: { xs: "2rem", md: "2.8rem" },
             }}
           >
@@ -475,6 +420,7 @@ export default function HrPage() {
             sx={{
               color: "text.secondary",
               maxWidth: 850,
+              lineHeight: 1.7,
             }}
           >
             Sélectionnez une branche du module RH. Les accès affichés dépendent
@@ -502,13 +448,13 @@ export default function HrPage() {
               <CircularProgress />
 
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                Chargement des accès HR...
+                Chargement des accès RH...
               </Typography>
             </Stack>
           </Paper>
         ) : visibleSections.length === 0 ? (
           <Alert severity="warning">
-            Aucun sous-module HR n'est disponible pour cet utilisateur.
+            Aucun sous-module RH n'est disponible pour cet utilisateur.
           </Alert>
         ) : (
           <Box

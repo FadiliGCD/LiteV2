@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Link } from "react-router-dom";
 import dayjs from "dayjs";
 import {
   Alert,
@@ -25,6 +26,7 @@ import {
 } from "@mui/material";
 import { supabase } from "../lib/supabaseClient";
 import AppFooter from "../components/AppFooter";
+import AppHeader from "../components/AppHeader";
 
 type ProfileRow = {
   role: string | null;
@@ -324,7 +326,7 @@ export default function PointagePage() {
       } = await supabase.auth.getUser();
 
       if (!user) {
-        throw new Error("Session not found.");
+        throw new Error("Session introuvable.");
       }
 
       const [profileResult, employeesResult, recordsResult] =
@@ -359,7 +361,7 @@ export default function PointagePage() {
       setEmployees((employeesResult.data ?? []) as EmployeeRow[]);
       setRecords((recordsResult.data ?? []) as PointageRecord[]);
     } catch (loadError: any) {
-      setError(loadError?.message ?? "Failed to load pointage.");
+      setError(loadError?.message ?? "Impossible de charger le pointage.");
       setEmployees([]);
       setRecords([]);
     } finally {
@@ -379,7 +381,7 @@ export default function PointagePage() {
       data: { user },
     } = await supabase.auth.getUser();
 
-    if (!user) throw new Error("Session not found.");
+    if (!user) throw new Error("Session introuvable.");
 
     const existing = recordMap.get(employee.id);
 
@@ -404,10 +406,7 @@ export default function PointagePage() {
     if (upsertError) throw new Error(upsertError.message);
   };
 
-  const clockInLikeAction = async (
-    employee: EmployeeRow,
-    label: string
-  ) => {
+  const clockInLikeAction = async (employee: EmployeeRow, label: string) => {
     const existing = recordMap.get(employee.id);
     const field = findNextInField(existing);
 
@@ -421,20 +420,15 @@ export default function PointagePage() {
       [field]: nowForSelectedDateIso(selectedDate),
     });
 
-    setInfo(`${label} enregistré pour ${employee.full_name}.`);
+    setInfo(`${label} enregistrée pour ${employee.full_name}.`);
   };
 
-  const clockOutLikeAction = async (
-    employee: EmployeeRow,
-    label: string
-  ) => {
+  const clockOutLikeAction = async (employee: EmployeeRow, label: string) => {
     const existing = recordMap.get(employee.id);
     const openPeriod = findOpenOutField(existing);
 
     if (!openPeriod) {
-      throw new Error(
-        "Aucune période ouverte. Enregistrez d'abord une entrée."
-      );
+      throw new Error("Aucune période ouverte. Enregistrez d'abord une entrée.");
     }
 
     await upsertRecord(employee, {
@@ -444,7 +438,7 @@ export default function PointagePage() {
       ),
     });
 
-    setInfo(`${label} enregistré pour ${employee.full_name}.`);
+    setInfo(`${label} enregistrée pour ${employee.full_name}.`);
   };
 
   const handleAction = async (
@@ -454,7 +448,7 @@ export default function PointagePage() {
     setError("");
 
     if (!selectedEmployee) {
-      setError("Sélectionnez un employé d'abord.");
+      setError("Sélectionnez d'abord un employé.");
       return;
     }
 
@@ -479,7 +473,7 @@ export default function PointagePage() {
 
       await loadPointage();
     } catch (actionError: any) {
-      setError(actionError?.message ?? "Action failed.");
+      setError(actionError?.message ?? "Action impossible.");
     } finally {
       setSaving(false);
     }
@@ -516,16 +510,13 @@ export default function PointagePage() {
       await loadPointage();
       setInfo("Horaire mis à jour.");
     } catch (updateError: any) {
-      setError(updateError?.message ?? "Update failed.");
+      setError(updateError?.message ?? "Impossible de mettre à jour l'horaire.");
     } finally {
       setSaving(false);
     }
   };
 
-  const updateAdjustment = async (
-    employee: EmployeeRow,
-    value: string
-  ) => {
+  const updateAdjustment = async (employee: EmployeeRow, value: string) => {
     setInfo("");
     setError("");
     setSaving(true);
@@ -538,7 +529,7 @@ export default function PointagePage() {
       await loadPointage();
       setInfo("+ Hr / - Hr mis à jour.");
     } catch (updateError: any) {
-      setError(updateError?.message ?? "Update failed.");
+      setError(updateError?.message ?? "Impossible de mettre à jour les heures.");
     } finally {
       setSaving(false);
     }
@@ -560,7 +551,9 @@ export default function PointagePage() {
       await loadPointage();
       setInfo("Cotisation cuisine mise à jour.");
     } catch (updateError: any) {
-      setError(updateError?.message ?? "Update failed.");
+      setError(
+        updateError?.message ?? "Impossible de mettre à jour la cotisation cuisine."
+      );
     } finally {
       setSaving(false);
     }
@@ -587,7 +580,7 @@ export default function PointagePage() {
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (!user) throw new Error("Session not found.");
+      if (!user) throw new Error("Session introuvable.");
 
       const { error: insertError } = await supabase
         .from("pointage_employees")
@@ -609,7 +602,7 @@ export default function PointagePage() {
 
       setInfo("Employé ajouté.");
     } catch (insertError: any) {
-      setError(insertError?.message ?? "Failed to add employee.");
+      setError(insertError?.message ?? "Impossible d'ajouter l'employé.");
     } finally {
       setSaving(false);
     }
@@ -650,7 +643,7 @@ export default function PointagePage() {
 
       setInfo("Employé supprimé de la liste active.");
     } catch (deleteError: any) {
-      setError(deleteError?.message ?? "Failed to delete employee.");
+      setError(deleteError?.message ?? "Impossible de supprimer l'employé.");
     } finally {
       setSaving(false);
     }
@@ -693,72 +686,29 @@ export default function PointagePage() {
         flexDirection: "column",
       }}
     >
-      <Paper
-        square
-        elevation={0}
-        sx={{
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          bgcolor: "rgba(255,255,255,0.95)",
-        }}
-      >
-        <Box
-          sx={{
-            maxWidth: 1600,
-            mx: "auto",
-            px: { xs: 2, md: 4 },
-            py: 1.5,
-          }}
-        >
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            justifyContent="space-between"
-            alignItems={{ xs: "flex-start", sm: "center" }}
-            spacing={2}
-          >
-            <Stack direction="row" spacing={1.5} alignItems="center">
-              <Box
-                component="img"
-                src="/logo.png"
-                alt="Lite V2"
-                sx={{
-                  height: 44,
-                  width: "auto",
-                  objectFit: "contain",
-                }}
-              />
+      <AppHeader
+        title="Pointage"
+        subtitle="Journal quotidien des entrées, sorties et pauses"
+        actions={
+          <>
+            <Button component={Link} to="/hr" variant="outlined">
+              HR
+            </Button>
 
-              <Box>
-                <Typography variant="h6" sx={{ fontWeight: 900 }}>
-                  Pointage
-                </Typography>
+            <Button component={Link} to="/modules" variant="outlined">
+              Modules
+            </Button>
 
-                <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  Journal quotidien des entrées, sorties et pauses
-                </Typography>
-              </Box>
-            </Stack>
-
-            <Stack direction="row" spacing={1}>
-              <Button variant="outlined" href="/hr">
-                HR
-              </Button>
-
-              <Button variant="text" href="/modules">
-                Modules
-              </Button>
-
-              <Button
-                variant="contained"
-                onClick={loadPointage}
-                disabled={loading}
-              >
-                Actualiser
-              </Button>
-            </Stack>
-          </Stack>
-        </Box>
-      </Paper>
+            <Button
+              variant="contained"
+              onClick={loadPointage}
+              disabled={loading}
+            >
+              Actualiser
+            </Button>
+          </>
+        }
+      />
 
       <Box
         component="main"
@@ -783,13 +733,7 @@ export default function PointagePage() {
                 Journal de pointage
               </Typography>
 
-              <Typography
-                variant="body2"
-                sx={{ color: "text.secondary", mt: 0.5 }}
-              >
-                Structure basée sur l'ancien journal PDF, avec la logique de
-                pointage moderne dans l'application.
-              </Typography>
+              
             </Box>
 
             <Stack direction="row" spacing={1} alignItems="center">
@@ -1129,7 +1073,9 @@ export default function PointagePage() {
                               </TableCell>
 
                               {PERIODS.map((period) => (
-                                <React.Fragment key={`${employee.id}-${period.label}`}>
+                                <React.Fragment
+                                  key={`${employee.id}-${period.label}`}
+                                >
                                   <TableCell sx={periodCellSx}>
                                     <TextField
                                       type="time"
@@ -1158,7 +1104,9 @@ export default function PointagePage() {
                                     <TextField
                                       type="time"
                                       size="small"
-                                      value={formatTime(record?.[period.outField])}
+                                      value={formatTime(
+                                        record?.[period.outField]
+                                      )}
                                       onChange={(event) =>
                                         updateRecordTime(
                                           employee,
@@ -1182,7 +1130,9 @@ export default function PointagePage() {
 
                               <TableCell align="center" sx={totalCellSx}>
                                 <TextField
-                                  key={`${employee.id}-${record?.hour_adjustment ?? 0}`}
+                                  key={`${employee.id}-${
+                                    record?.hour_adjustment ?? 0
+                                  }`}
                                   size="small"
                                   defaultValue={formatHourNumber(
                                     safeNum(record?.hour_adjustment, 0)
@@ -1378,7 +1328,7 @@ export default function PointagePage() {
         </DialogContent>
 
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setOpenEmployeeDialog(false)}>Cancel</Button>
+          <Button onClick={() => setOpenEmployeeDialog(false)}>Annuler</Button>
 
           <Button variant="contained" onClick={addEmployee} disabled={saving}>
             Ajouter

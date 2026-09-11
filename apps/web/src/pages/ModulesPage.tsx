@@ -11,7 +11,8 @@ import {
   Typography,
 } from "@mui/material";
 import AppFooter from "../components/AppFooter";
-import { getSession, signOut } from "../auth/auth";
+import AppHeader from "../components/AppHeader";
+import { getSession } from "../auth/auth";
 import { supabase } from "../lib/supabaseClient";
 
 type ModuleKey =
@@ -19,7 +20,8 @@ type ModuleKey =
   | "production"
   | "stock"
   | "accounting"
-  | "hr";
+  | "hr"
+  | "settings";
 
 type ModuleCard = {
   key: ModuleKey;
@@ -38,7 +40,7 @@ type ProfileRow = {
 const MODULES: ModuleCard[] = [
   {
     key: "reception",
-    title: "Reception",
+    title: "Réception",
     description:
       "Gestion de la réception des marchandises, fournisseurs et contrôles d'arrivée.",
     shortName: "RC",
@@ -78,6 +80,15 @@ const MODULES: ModuleCard[] = [
     path: "/hr",
     available: true,
   },
+  {
+    key: "settings",
+    title: "Paramètres",
+    description:
+      "Centre de sécurité superuser ",
+    shortName: "ST",
+    path: "/settings",
+    available: true,
+  },
 ];
 
 function getVisibleModules(profile: ProfileRow | null) {
@@ -93,13 +104,16 @@ function getVisibleModules(profile: ProfileRow | null) {
     ? profile.module_access
     : [];
 
-  return MODULES.filter((module) => access.includes(module.key));
+  return MODULES.filter((module) => {
+    if (module.key === "settings") return false;
+
+    return access.includes(module.key);
+  });
 }
 
 export default function ModulesPage() {
   const navigate = useNavigate();
 
-  const [sessionLabel, setSessionLabel] = React.useState("");
   const [message, setMessage] = React.useState("");
   const [profile, setProfile] = React.useState<ProfileRow | null>(null);
   const [loadingProfile, setLoadingProfile] = React.useState(true);
@@ -107,7 +121,7 @@ export default function ModulesPage() {
   React.useEffect(() => {
     let mounted = true;
 
-    const loadSession = async () => {
+    const loadProfile = async () => {
       setLoadingProfile(true);
 
       try {
@@ -118,10 +132,6 @@ export default function ModulesPage() {
         } = await supabase.auth.getUser();
 
         if (!mounted) return;
-
-        if (session) {
-          setSessionLabel(`${session.user.email} • ${session.role}`);
-        }
 
         if (!user) {
           setProfile(null);
@@ -149,7 +159,7 @@ export default function ModulesPage() {
       }
     };
 
-    loadSession();
+    loadProfile();
 
     return () => {
       mounted = false;
@@ -171,14 +181,6 @@ export default function ModulesPage() {
     navigate(module.path);
   };
 
-  const logout = async () => {
-    try {
-      await signOut();
-    } finally {
-      navigate("/login", { replace: true });
-    }
-  };
-
   return (
     <Box
       sx={{
@@ -190,63 +192,10 @@ export default function ModulesPage() {
           "radial-gradient(circle at top left, rgba(31,111,235,0.14), transparent 35%), #f4f7fb",
       }}
     >
-      <Paper
-        square
-        elevation={0}
-        sx={{
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          bgcolor: "rgba(255,255,255,0.92)",
-          backdropFilter: "blur(12px)",
-        }}
-      >
-        <Box
-          sx={{
-            maxWidth: 1500,
-            mx: "auto",
-            px: { xs: 2, md: 4 },
-            py: 1.5,
-          }}
-        >
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            alignItems={{ xs: "flex-start", sm: "center" }}
-            justifyContent="space-between"
-            spacing={2}
-          >
-            <Stack direction="row" spacing={1.5} alignItems="center">
-              <Box
-                component="img"
-                src="/logo.png"
-                alt="Lite V2"
-                sx={{
-                  height: 44,
-                  width: "auto",
-                  objectFit: "contain",
-                }}
-              />
-
-              <Box>
-                <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                  KATASAB Fish Portal
-                </Typography>
-
-                <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  Administration centrale
-                </Typography>
-              </Box>
-            </Stack>
-
-            <Stack direction="row" spacing={1} alignItems="center">
-              <Chip variant="outlined" label={sessionLabel || "Session active"} />
-
-              <Button variant="outlined" onClick={logout}>
-                Logout
-              </Button>
-            </Stack>
-          </Stack>
-        </Box>
-      </Paper>
+      <AppHeader
+        title="KATASAB Fish Portal"
+        subtitle="Administration centrale"
+      />
 
       <Box
         component="main"
@@ -263,7 +212,7 @@ export default function ModulesPage() {
           <Typography
             variant="h3"
             sx={{
-              fontWeight: 800,
+              fontWeight: 900,
               fontSize: { xs: "2rem", md: "2.8rem" },
             }}
           >
@@ -275,6 +224,7 @@ export default function ModulesPage() {
             sx={{
               color: "text.secondary",
               maxWidth: 760,
+              lineHeight: 1.7,
             }}
           >
             Accédez aux différents services de l'entreprise. Les modules
@@ -325,7 +275,7 @@ export default function ModulesPage() {
           >
             {visibleModules.map((module) => (
               <Paper
-                key={module.title}
+                key={module.key}
                 elevation={0}
                 onClick={() => openModule(module)}
                 sx={{
@@ -402,7 +352,7 @@ export default function ModulesPage() {
                       />
                     </Stack>
 
-                    <Typography variant="h5" sx={{ mt: 3, fontWeight: 800 }}>
+                    <Typography variant="h5" sx={{ mt: 3, fontWeight: 900 }}>
                       {module.title}
                     </Typography>
 
@@ -427,7 +377,9 @@ export default function ModulesPage() {
                       openModule(module);
                     }}
                   >
-                    {module.available ? "Ouvrir le module" : "Coming soon"}
+                    {module.available
+                      ? "Ouvrir le module"
+                      : "Bientôt disponible"}
                   </Button>
                 </Stack>
               </Paper>

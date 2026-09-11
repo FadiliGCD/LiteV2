@@ -340,7 +340,7 @@ export default function RapportDeChargePage() {
           <Box>
             <Typography variant="h5">Rapport de charge</Typography>
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
-              Editable document (Word-like). Use Print to save as PDF.
+              utiliser pour générer un document de vente / livraison à partir d'une réservation de parking.
             </Typography>
           </Box>
 
