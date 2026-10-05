@@ -46,7 +46,7 @@ export default function App() {
         >
           <Route index element={<DashboardPage />} />
 
-          <Route path="entree" element={<EntreePage role="superuser" />} />
+          <Route path="entree" element={<EntreePage />} />
 
           <Route path="parking" element={<ParkingPage />} />
 

@@ -8,6 +8,7 @@ import {
   Typography,
   Chip,
   Alert,
+  CircularProgress,
   Divider,
   Paper,
   Dialog,
@@ -43,8 +44,7 @@ import {
 } from "@lite/shared";
 
 import { supabase } from "../lib/supabaseClient";
-
-type Role = "superuser" | "user";
+import useStockAccess from "../auth/useStockAccess";
 
 type EntreeRow = {
   id: string;
@@ -310,8 +310,20 @@ function mapObjectToRow(obj: Record<string, unknown>): EntreeRow {
 // -----------------------------
 // Page
 // -----------------------------
-export default function EntreePage({ role = "superuser" }: { role?: Role }) {
-  const canEditRole = role === "superuser";
+export default function EntreePage() {
+  const { can, loadingAccess, role } = useStockAccess();
+
+  const canView = can("entree_view");
+  const canCreate = can("entree_create");
+  const canUpdate = can("entree_update");
+  const canDelete = can("entree_delete");
+  const canImport = can("entree_import");
+  const canExport = can("entree_export");
+  const canSendParking = can("entree_send_parking");
+
+  const canDuplicate = canCreate && canUpdate;
+  const canSaveAnyChange = canCreate || canUpdate || canDelete;
+
   const apiRef = useGridApiRef();
 
   const [loading, setLoading] = React.useState(true);
@@ -395,19 +407,26 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
   }, []);
 
   React.useEffect(() => {
+    if (loadingAccess) return;
+
+    if (!canView) {
+      setLoading(false);
+      return;
+    }
+
     loadFromDb();
-  }, [loadFromDb]);
+  }, [loadFromDb, loadingAccess, canView]);
 
   const handleCellClick = React.useCallback(
     (params: GridCellParams) => {
-      if (!canEditRole) return;
+      if (!canUpdate) return;
 
       apiRef.current?.startCellEditMode({
         id: params.id,
         field: params.field,
       });
     },
-    [apiRef, canEditRole]
+    [apiRef, canUpdate]
   );
 
   const columns = React.useMemo<GridColDef<EntreeRow>[]>(() => {
@@ -419,7 +438,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
       field: field as string,
       headerName,
       width,
-      editable: true,
+      editable: canUpdate,
       type: "number",
       valueParser: (value) => toNumberOrNull(value),
       valueSetter: (value, row) =>
@@ -431,13 +450,13 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         field: "Lot",
         headerName: "Lot",
         width: 140,
-        editable: true,
+        editable: canUpdate,
       },
       {
         field: "Code_Prp",
         headerName: "Code_Prp",
         width: 140,
-        editable: true,
+        editable: canUpdate,
         type: "singleSelect",
         valueOptions: CODE_PRP_OPTIONS,
       },
@@ -445,7 +464,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         field: "Date_production",
         headerName: "Date production",
         width: 150,
-        editable: true,
+        editable: canUpdate,
         type: "date",
         valueGetter: (value) => (value ? new Date(String(value)) : null),
         valueSetter: (value, row) => {
@@ -458,7 +477,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         field: "Produit",
         headerName: "Produit",
         width: 170,
-        editable: true,
+        editable: canUpdate,
         type: "singleSelect",
         valueOptions: PRODUIT_OPTIONS,
       },
@@ -466,7 +485,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         field: "Calibre",
         headerName: "Calibre",
         width: 140,
-        editable: true,
+        editable: canUpdate,
         type: "singleSelect",
         valueOptions: (params) => {
           const produit = params?.row?.Produit;
@@ -478,7 +497,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         field: "Qualite",
         headerName: "Qualite",
         width: 110,
-        editable: true,
+        editable: canUpdate,
         type: "singleSelect",
         valueOptions: QUALITE_OPTIONS,
       },
@@ -493,7 +512,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         field: "Emballage",
         headerName: "Emballage",
         width: 120,
-        editable: true,
+        editable: canUpdate,
         type: "singleSelect",
         valueOptions: EMBALLAGE_OPTIONS,
       },
@@ -501,9 +520,14 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
       numericCol("Colis", "Colis", 90),
       numericCol("Quantite", "Quantite", 110),
     ];
-  }, []);
+  }, [canUpdate]);
 
   const openNewEntry = () => {
+    if (!canCreate) {
+      setErrorMessages(["Vous n'avez pas la permission d'ajouter une entrée."]);
+      return;
+    }
+
     setInfo("");
     setErrorMessages([]);
     setDraft(newDraftRow());
@@ -520,13 +544,44 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
 
     setRows((prev) => [row, ...prev]);
     setOpenNew(false);
-    setInfo("New entry added to grid (not saved yet).");
+    setInfo("Nouvelle entrée ajoutée au tableau. Cliquez sur Sauvegarder.");
   };
 
   const handleSave = async () => {
     try {
       setInfo("");
       setErrorMessages([]);
+
+      const lastSavedMap = new Map(lastSavedRows.map((row) => [row.id, row]));
+
+      const existingChanged = rows.filter((row) => {
+        if (isTempId(row.id)) return false;
+
+        const saved = lastSavedMap.get(row.id);
+
+        if (!saved) return true;
+
+        return stableStringify(row) !== stableStringify(saved);
+      });
+
+      const fresh = rows.filter((row) => isTempId(row.id));
+
+      if (deletedIds.size && !canDelete) {
+        setErrorMessages(["Vous n'avez pas la permission de supprimer des entrées."]);
+        return;
+      }
+
+      if (existingChanged.length && !canUpdate) {
+        setErrorMessages([
+          "Vous n'avez pas la permission de modifier les entrées existantes.",
+        ]);
+        return;
+      }
+
+      if (fresh.length && !canCreate) {
+        setErrorMessages(["Vous n'avez pas la permission d'ajouter des entrées."]);
+        return;
+      }
 
       if (deletedIds.size) {
         const ids = Array.from(deletedIds).filter((id) => !isTempId(id));
@@ -541,11 +596,8 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         }
       }
 
-      const existing = rows.filter((r) => !isTempId(r.id));
-      const fresh = rows.filter((r) => isTempId(r.id));
-
-      if (existing.length) {
-        const payloadUpsert = existing.map(uiToDbForUpsert);
+      if (existingChanged.length) {
+        const payloadUpsert = existingChanged.map(uiToDbForUpsert);
 
         const { error: upErr } = await supabase
           .from("entree")
@@ -565,25 +617,30 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
       }
 
       await loadFromDb();
-      setInfo("Saved to database.");
+      setInfo("Sauvegardé dans la base de données.");
     } catch (e: any) {
-      setErrorMessages([e?.message ?? "Save failed."]);
+      setErrorMessages([e?.message ?? "La sauvegarde a échoué."]);
     }
   };
 
   const handleCancel = () => {
     setRows(lastSavedRows);
     setDeletedIds(new Set());
-    setInfo("Restored last saved snapshot.");
+    setInfo("Dernière version sauvegardée restaurée.");
     setErrorMessages([]);
   };
 
   const handleRefresh = async () => {
     await loadFromDb();
-    setInfo("Refreshed from database.");
+    setInfo("Actualisé depuis la base de données.");
   };
 
   const handleExportXLSX = () => {
+    if (!canExport) {
+      setErrorMessages(["Vous n'avez pas la permission d'exporter les données."]);
+      return;
+    }
+
     const headers = [
       "Lot",
       "Code_Prp",
@@ -627,9 +684,21 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
     XLSX.writeFile(wb, `entree_${dayjs().format("YYYYMMDD_HHmm")}.xlsx`);
   };
 
-  const handleClickImport = () => fileInputRef.current?.click();
+  const handleClickImport = () => {
+    if (!canImport) {
+      setErrorMessages(["Vous n'avez pas la permission d'importer des données."]);
+      return;
+    }
+
+    fileInputRef.current?.click();
+  };
 
   const importFromXLSX = async (file: File) => {
+    if (!canImport) {
+      setErrorMessages(["Vous n'avez pas la permission d'importer des données."]);
+      return;
+    }
+
     setInfo("");
     setErrorMessages([]);
 
@@ -762,10 +831,13 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
   };
 
   const duplicateSelectedRow = () => {
-    if (!canEditRole) return;
+    if (!canDuplicate) {
+      setErrorMessages(["Vous n'avez pas la permission de dupliquer une entrée."]);
+      return;
+    }
 
     if (selectedIdsArray.length !== 1) {
-      setErrorMessages(["Select exactly one row to duplicate."]);
+      setErrorMessages(["Sélectionnez exactement une ligne à dupliquer."]);
       return;
     }
 
@@ -773,7 +845,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
    const sourceIndex = rows.findIndex((r) => String(r.id) === selectedId);
 
     if (sourceIndex === -1) {
-      setErrorMessages(["Selected row was not found."]);
+      setErrorMessages(["La ligne sélectionnée est introuvable."]);
       return;
     }
 
@@ -796,12 +868,17 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
     } as any);
 
     setErrorMessages([]);
-    setInfo("Row duplicated. Modify the copied row, then click Save.");
+    setInfo("Ligne dupliquée. Modifiez la copie, puis cliquez sur Sauvegarder.");
   };
 
   const openDeleteSelected = () => {
+    if (!canDelete) {
+      setErrorMessages(["Vous n'avez pas la permission de supprimer des entrées."]);
+      return;
+    }
+
     if (!selectedIdsArray.length) {
-      setErrorMessages(["Select at least one row (checkbox) to delete."]);
+      setErrorMessages(["Sélectionnez au moins une ligne à supprimer."]);
       return;
     }
 
@@ -811,6 +888,11 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
   };
 
   const confirmDeleteSelected = () => {
+    if (!canDelete) {
+      setErrorMessages(["Vous n'avez pas la permission de supprimer des entrées."]);
+      return;
+    }
+
     const idsToDelete = new Set(selectedIdsArray.map(String));
 
     setDeletedIds((prev) => {
@@ -836,6 +918,11 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
   const openParkDialog = () => {
     setInfo("");
     setErrorMessages([]);
+
+    if (!canSendParking) {
+      setErrorMessages(["Vous n'avez pas la permission d'envoyer vers Parking."]);
+      return;
+    }
 
     if (!hasAnyMultiFilter(activeFilterForm)) {
       setErrorMessages([
@@ -878,6 +965,11 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
 
   const confirmPark = async () => {
     try {
+      if (!canSendParking) {
+        setErrorMessages(["Vous n'avez pas la permission d'envoyer vers Parking."]);
+        return;
+      }
+
       const rid = Number(parkReservationId);
 
       if (!Number.isFinite(rid) || rid <= 0) {
@@ -1017,6 +1109,26 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
     }
   };
 
+  if (loadingAccess) {
+    return (
+      <Stack alignItems="center" spacing={2} sx={{ py: 8 }}>
+        <CircularProgress />
+
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          Chargement des permissions...
+        </Typography>
+      </Stack>
+    );
+  }
+
+  if (!canView) {
+    return (
+      <Alert severity="warning">
+        Vous n'avez pas accès à la page Entrée.
+      </Alert>
+    );
+  }
+
   return (
     <Stack spacing={2}>
       <Stack
@@ -1034,9 +1146,9 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
 
         <Stack direction="row" spacing={1} alignItems="center">
           {hasUnsavedChanges ? (
-            <Chip color="warning" label="Unsaved changes" />
+            <Chip color="warning" label="Modifications non sauvegardées" />
           ) : (
-            <Chip color="success" label="Saved" />
+            <Chip color="success" label="Sauvegardé" />
           )}
 
           <Chip
@@ -1049,7 +1161,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
           />
 
           {loading ? (
-            <Chip color="info" label="Loading..." />
+            <Chip color="info" label="Chargement..." />
           ) : (
             <Chip color="success" label="Live" />
           )}
@@ -1059,71 +1171,71 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
       <Paper sx={{ p: 1.2, borderRadius: 3 }}>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
           <Button variant="outlined" onClick={handleRefresh} disabled={loading}>
-            Refresh
+            Actualiser
           </Button>
 
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
 
-          <Button variant="contained" onClick={openNewEntry} disabled={!canEditRole}>
-            New Entry
+          <Button variant="contained" onClick={openNewEntry} disabled={!canCreate}>
+            Nouvelle entrée
           </Button>
 
           <Button
             variant="outlined"
             onClick={duplicateSelectedRow}
-            disabled={!canEditRole || selectedIdsArray.length !== 1}
+            disabled={!canDuplicate || selectedIdsArray.length !== 1}
           >
-            Duplicate
+            Dupliquer
           </Button>
 
           <Button
             variant="outlined"
             onClick={handleSave}
-            disabled={!canEditRole || !hasUnsavedChanges}
+            disabled={!canSaveAnyChange || !hasUnsavedChanges}
           >
-            Save
+            Sauvegarder
           </Button>
 
-          <Button variant="text" onClick={handleCancel} disabled={!canEditRole}>
-            Cancel
+          <Button variant="text" onClick={handleCancel} disabled={!hasUnsavedChanges}>
+            Annuler
           </Button>
 
           <Button
             variant="outlined"
             color="error"
             onClick={openDeleteSelected}
-            disabled={!canEditRole}
+            disabled={!canDelete || !selectedIdsArray.length}
           >
-            Delete Row(s)
+            Supprimer
           </Button>
 
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
 
           <Button variant="outlined" onClick={openFilterDialog}>
-            Filter
+            Filtrer
           </Button>
 
           <Button variant="text" onClick={clearFilter}>
-            Clear Filter
+            Réinitialiser filtre
           </Button>
 
           <Button
             variant="contained"
             color="secondary"
             onClick={openParkDialog}
-            disabled={!canEditRole}
+            disabled={!canSendParking}
           >
-            Park
+            Envoyer au parking
           </Button>
 
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
 
-          <Button variant="outlined" onClick={handleExportXLSX}>
-            Export XLSX
+          <Button variant="outlined" onClick={handleExportXLSX} disabled={!canExport}>
+            Exporter XLSX
           </Button>
 
-          <Button variant="outlined" onClick={handleClickImport}>
-            Import XLSX
+          <Button variant="outlined" onClick={handleClickImport} disabled={!canImport}>
+            Importer XLSX
           </Button>
 
           <input
@@ -1144,7 +1256,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
 
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Role:{" "}
+            Rôle: {" "}
             <Box
               component="span"
               sx={{
@@ -1199,7 +1311,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
 
               return cleaned;
             }}
-            isCellEditable={() => canEditRole}
+            isCellEditable={() => canUpdate}
           />
         </Box>
       </Paper>
@@ -1211,7 +1323,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle>Delete selected rows</DialogTitle>
+        <DialogTitle>Supprimer les lignes sélectionnées</DialogTitle>
 
         <DialogContent>
           <Typography variant="body2">
@@ -1226,7 +1338,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         </DialogContent>
 
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setOpenDeleteRows(false)}>Cancel</Button>
+          <Button onClick={() => setOpenDeleteRows(false)}>Annuler</Button>
 
           <Button variant="contained" color="error" onClick={confirmDeleteSelected}>
             Delete
@@ -1422,7 +1534,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         </DialogContent>
 
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setOpenFilter(false)}>Cancel</Button>
+          <Button onClick={() => setOpenFilter(false)}>Annuler</Button>
 
           <Button onClick={() => setFilterForm(emptyFilterForm())}>Reset</Button>
 
@@ -1432,14 +1544,14 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         </DialogActions>
       </Dialog>
 
-      {/* New Entry dialog */}
+      {/* Nouvelle entrée dialog */}
       <Dialog
         open={openNew}
         onClose={() => setOpenNew(false)}
         maxWidth="md"
         fullWidth
       >
-        <DialogTitle>New Entry</DialogTitle>
+        <DialogTitle>Nouvelle entrée</DialogTitle>
 
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
@@ -1689,10 +1801,10 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         </DialogContent>
 
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setOpenNew(false)}>Cancel</Button>
+          <Button onClick={() => setOpenNew(false)}>Annuler</Button>
 
           <Button variant="contained" onClick={saveNewEntry}>
-            Save Entry
+            Sauvegarder
           </Button>
         </DialogActions>
       </Dialog>
@@ -1704,7 +1816,7 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         maxWidth="lg"
         fullWidth
       >
-        <DialogTitle>Park Reservation</DialogTitle>
+        <DialogTitle>Envoyer au parking</DialogTitle>
 
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
@@ -1786,10 +1898,10 @@ export default function EntreePage({ role = "superuser" }: { role?: Role }) {
         </DialogContent>
 
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setOpenPark(false)}>Cancel</Button>
+          <Button onClick={() => setOpenPark(false)}>Annuler</Button>
 
           <Button variant="contained" color="secondary" onClick={confirmPark}>
-            Confirm Park
+            Confirmer
           </Button>
         </DialogActions>
       </Dialog>
