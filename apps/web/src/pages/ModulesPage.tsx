@@ -35,6 +35,7 @@ type ModuleCard = {
 type ProfileRow = {
   role: string | null;
   module_access: string[] | null;
+  stock_access: string[] | null;
 };
 
 const MODULES: ModuleCard[] = [
@@ -82,14 +83,61 @@ const MODULES: ModuleCard[] = [
   },
   {
     key: "settings",
-    title: "Paramètres",
+    title: "Settings",
     description:
-      "Centre de sécurité superuser ",
+      "Security control center for users, roles, access, logs and maintenance.",
     shortName: "ST",
     path: "/settings",
     available: true,
   },
 ];
+
+const STOCK_PATHS = [
+  {
+    permission: "stock_dashboard",
+    path: "/stock",
+  },
+  {
+    permission: "entree_view",
+    path: "/stock/entree",
+  },
+  {
+    permission: "parking_view",
+    path: "/stock/parking",
+  },
+  {
+    permission: "sortie_view",
+    path: "/stock/sortie",
+  },
+  {
+    permission: "rapport_charge_view",
+    path: "/stock/rapport-charge",
+  },
+];
+
+function hasStockAccess(profile: ProfileRow | null, permission: string) {
+  if (!profile) return false;
+
+  const role = String(profile.role ?? "").toLowerCase();
+
+  if (role === "superuser" || role === "admin") {
+    return true;
+  }
+
+  const access = Array.isArray(profile.stock_access)
+    ? profile.stock_access
+    : [];
+
+  return access.includes(permission);
+}
+
+function getFirstAllowedStockPath(profile: ProfileRow | null) {
+  const firstAllowed = STOCK_PATHS.find((item) =>
+    hasStockAccess(profile, item.permission)
+  );
+
+  return firstAllowed?.path ?? "/modules";
+}
 
 function getVisibleModules(profile: ProfileRow | null) {
   if (!profile) return [];
@@ -140,7 +188,7 @@ export default function ModulesPage() {
 
         const { data, error } = await supabase
           .from("profiles")
-          .select("role, module_access")
+          .select("role, module_access, stock_access")
           .eq("id", user.id)
           .maybeSingle();
 
@@ -150,6 +198,9 @@ export default function ModulesPage() {
           role: String(data?.role ?? session?.role ?? "user"),
           module_access: Array.isArray(data?.module_access)
             ? data.module_access
+            : [],
+          stock_access: Array.isArray(data?.stock_access)
+            ? data.stock_access
             : [],
         });
       } catch {
@@ -175,6 +226,11 @@ export default function ModulesPage() {
 
     if (!module.available || !module.path) {
       setMessage(`${module.title} sera disponible dans une prochaine étape.`);
+      return;
+    }
+
+    if (module.key === "stock") {
+      navigate(getFirstAllowedStockPath(profile));
       return;
     }
 
