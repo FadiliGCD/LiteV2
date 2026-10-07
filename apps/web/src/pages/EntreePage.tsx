@@ -536,17 +536,45 @@ export default function EntreePage() {
     setOpenNew(true);
   };
 
-  const saveNewEntry = () => {
-    const row: EntreeRow = {
-      ...draft,
-      id: makeTempId(),
-      Calibre: draft.Calibre?.trim() ? draft.Calibre : "nan",
-    };
+  const saveNewEntry = async () => {
+  if (!canCreate) {
+    setErrorMessages(["Vous n'avez pas la permission d'ajouter une entrée."]);
+    return;
+  }
 
-    setRows((prev) => [row, ...prev]);
-    setOpenNew(false);
-    setInfo("Nouvelle entrée ajoutée au tableau. Cliquez sur Sauvegarder.");
+  const row: EntreeRow = {
+    ...draft,
+    id: makeTempId(),
+    Calibre: draft.Calibre?.trim() ? draft.Calibre : "nan",
   };
+
+  try {
+    setInfo("");
+    setErrorMessages([]);
+
+    await ensureFreshSession();
+
+    const { error: insertError } = await supabase
+      .from("entree")
+      .insert(uiToDbForInsert(row));
+
+    if (insertError) {
+      throw new Error(insertError.message);
+    }
+
+    setOpenNew(false);
+    setDraft(newDraftRow());
+    setDraftPctCtrlText("");
+
+    await loadFromDb();
+
+    setInfo("Nouvelle entrée sauvegardée directement dans la base de données.");
+  } catch (e: any) {
+    setErrorMessages([
+      e?.message ?? "Impossible de sauvegarder la nouvelle entrée.",
+    ]);
+  }
+};
 
   const handleSave = async () => {
     try {
