@@ -45,6 +45,7 @@ import {
 
 import { supabase } from "../lib/supabaseClient";
 import useStockAccess from "../auth/useStockAccess";
+import { ensureFreshSession } from "../auth/auth";
 
 type EntreeRow = {
   id: string;
@@ -549,6 +550,8 @@ export default function EntreePage() {
 
   const handleSave = async () => {
     try {
+      await ensureFreshSession();
+
       setInfo("");
       setErrorMessages([]);
 
@@ -965,6 +968,7 @@ export default function EntreePage() {
 
   const confirmPark = async () => {
     try {
+      await ensureFreshSession();
       if (!canSendParking) {
         setErrorMessages(["Vous n'avez pas la permission d'envoyer vers Parking."]);
         return;

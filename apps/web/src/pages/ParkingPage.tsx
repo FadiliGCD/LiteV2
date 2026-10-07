@@ -60,6 +60,7 @@ import { supabase } from "../lib/supabaseClient";
 import useStockAccess from "../auth/useStockAccess";
 
 import { useNavigate } from "react-router-dom";
+import { ensureFreshSession } from "../auth/auth";
 
 
 
@@ -1034,6 +1035,7 @@ export default function ParkingPage() {
 
 
     try {
+      await ensureFreshSession();
 
       setError("");
 
@@ -1170,6 +1172,7 @@ export default function ParkingPage() {
     if (!selected) return;
 
     try {
+      await ensureFreshSession();
 
       setError("");
 
@@ -1335,6 +1338,7 @@ export default function ParkingPage() {
 
 
     try {
+      await ensureFreshSession();
 
       setError("");
 

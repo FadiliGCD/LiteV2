@@ -1,6 +1,6 @@
 import { supabase } from "../lib/supabaseClient";
 
-export type Role = "superuser" | "user";
+export type Role = string;
 
 export type SessionUser = {
   id: string;
@@ -84,8 +84,7 @@ export async function getSupabaseUser(): Promise<SessionUser | null> {
     });
   }
 
-  const roleRaw = (profile?.role ?? "user") as string;
-  const role: Role = roleRaw === "superuser" ? "superuser" : "user";
+  const role: Role = String(profile?.role ?? "user");
 
   return {
     id,
@@ -134,7 +133,47 @@ export function onAuthChange(cb: (session: AppSession | null) => void) {
 
 // -----------------------------
 // Auth actions
-// -----------------------------
+// -----------------------------`
+export async function ensureFreshSession() {
+  const {
+    data: { session },
+    error,
+  } = await supabase.auth.getSession();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!session) {
+    clearCache();
+    throw new Error(
+      "Votre session a expiré. Reconnectez-vous, puis réessayez."
+    );
+  }
+
+  const expiresAtMs = session.expires_at ? session.expires_at * 1000 : 0;
+  const expiresSoon =
+    expiresAtMs > 0 && Date.now() > expiresAtMs - 2 * 60 * 1000;
+
+  if (!expiresSoon) {
+    return session;
+  }
+
+  const {
+    data: { session: refreshedSession },
+    error: refreshError,
+  } = await supabase.auth.refreshSession();
+
+  if (refreshError || !refreshedSession) {
+    clearCache();
+    throw new Error(
+      "Votre session a expiré. Reconnectez-vous, puis réessayez."
+    );
+  }
+
+  return refreshedSession;
+}
+
 export async function signInWithEmail(email: string, password: string) {
   clearCache();
   const { data, error } = await supabase.auth.signInWithPassword({

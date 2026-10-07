@@ -78,6 +78,7 @@ import {
 
 import { supabase } from "../lib/supabaseClient";
 import useStockAccess from "../auth/useStockAccess";
+import { ensureFreshSession } from "../auth/auth";
 
 
 
@@ -903,6 +904,7 @@ export default function SortiePage() {
   const handleSave = async () => {
 
     try {
+      await ensureFreshSession();
 
       setInfo("");
 
