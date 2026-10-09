@@ -9,7 +9,6 @@ import {
   Chip,
   Alert,
   CircularProgress,
-  Divider,
   Paper,
   Dialog,
   DialogTitle,
@@ -33,7 +32,6 @@ import type {
   GridRowSelectionModel,
   GridCellParams,
 } from "@mui/x-data-grid";
-
 import type { Emballage, CodePrp, Produit, Qualite } from "@lite/shared";
 import {
   CODE_PRP_OPTIONS,
@@ -42,31 +40,25 @@ import {
   EMBALLAGE_OPTIONS,
   CALIBRE_BY_PRODUIT,
 } from "@lite/shared";
-
 import { supabase } from "../lib/supabaseClient";
 import useStockAccess from "../auth/useStockAccess";
 import { ensureFreshSession } from "../auth/auth";
-
 type EntreeRow = {
   id: string;
-
   Lot: string;
   Code_Prp: CodePrp | "";
   Date_production: string;
   Produit: Produit | "";
   Calibre: string;
   Qualite: Qualite | "";
-
   "%_Ctrl": number | null;
   Gr_mn: number | null;
   Gr_mx: number | null;
-
   Emballage: Emballage | "";
   PU: number | null;
   Colis: number | null;
   Quantite: number | null;
 };
-
 type ParkingItem = {
   entreeRowId: string;
   Lot: string;
@@ -77,7 +69,6 @@ type ParkingItem = {
   reservedQty: number;
   reservedColis: number | null;
 };
-
 type FilterForm = {
   Lot: string;
   Code_Prp: string;
@@ -90,39 +81,34 @@ type FilterForm = {
   Quantite_min: string;
   Quantite_max: string;
 };
-
 const CLIENTS = ["Client Atlas", "Client Marina", "Client Sahara"];
-
 // -----------------------------
 // Helpers
 // -----------------------------
 function todayISO() {
   return dayjs().format("YYYY-MM-DD");
 }
-
 function stableStringify(obj: unknown) {
   return JSON.stringify(obj);
 }
-
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(value);
+}
 function toNumberOrNull(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(String(v).replace("%", "").trim());
   return Number.isFinite(n) ? n : null;
 }
-
 function isTempId(id: string) {
   return String(id).startsWith("tmp-");
 }
-
 function makeTempId() {
   const u =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
   return `tmp-${u}`;
 }
-
 function newDraftRow(): EntreeRow {
   return {
     id: makeTempId(),
@@ -141,7 +127,6 @@ function newDraftRow(): EntreeRow {
     Quantite: null,
   };
 }
-
 function emptyFilterForm(): FilterForm {
   return {
     Lot: "",
@@ -156,7 +141,6 @@ function emptyFilterForm(): FilterForm {
     Quantite_max: "",
   };
 }
-
 // Keep this outside EntreePage so filter inputs do not lose focus
 function FilterRow({ children }: { children: React.ReactNode }) {
   return (
@@ -165,7 +149,6 @@ function FilterRow({ children }: { children: React.ReactNode }) {
     </Stack>
   );
 }
-
 // -----------------------------
 // Supabase mapping
 // -----------------------------
@@ -185,7 +168,6 @@ type EntreeDbRow = {
   colis: number | null;
   quantite: number | null;
 };
-
 function dbToUi(r: EntreeDbRow): EntreeRow {
   return {
     id: String(r.id),
@@ -204,7 +186,6 @@ function dbToUi(r: EntreeDbRow): EntreeRow {
     Quantite: r.quantite ?? null,
   };
 }
-
 function uiToDbForUpsert(r: EntreeRow) {
   return {
     id: r.id,
@@ -223,7 +204,6 @@ function uiToDbForUpsert(r: EntreeRow) {
     quantite: r.Quantite,
   };
 }
-
 function uiToDbForInsert(r: EntreeRow) {
   return {
     lot: r.Lot || null,
@@ -241,49 +221,38 @@ function uiToDbForInsert(r: EntreeRow) {
     quantite: r.Quantite,
   };
 }
-
 // -----------------------------
 // XLSX helpers
 // -----------------------------
 function normalizeDateToISO(input: unknown): string {
   if (input === null || input === undefined || input === "") return "";
-
   if (input instanceof Date) {
     return dayjs(input).format("YYYY-MM-DD");
   }
-
   if (typeof input === "number") {
     const d = XLSX.SSF.parse_date_code(input);
     if (d) {
       return dayjs(new Date(d.y, d.m - 1, d.d)).format("YYYY-MM-DD");
     }
   }
-
   const s = String(input).trim();
   if (!s) return "";
-
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
   const dmY = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (dmY) {
     return `${dmY[3]}-${dmY[2].padStart(2, "0")}-${dmY[1].padStart(2, "0")}`;
   }
-
   const d = dayjs(s);
   return d.isValid() ? d.format("YYYY-MM-DD") : "";
 }
-
 function getAny(obj: Record<string, unknown>, keys: string[]) {
   for (const k of keys) {
     if (k in obj) return obj[k];
   }
-
   return "";
 }
-
 function mapObjectToRow(obj: Record<string, unknown>): EntreeRow {
   const r = newDraftRow();
-
   r.Lot = String(getAny(obj, ["Lot"]) ?? "");
   r.Code_Prp =
     (String(getAny(obj, ["Code_Prp", "Code_Prd"]) ?? "").trim() as any) || "";
@@ -291,10 +260,8 @@ function mapObjectToRow(obj: Record<string, unknown>): EntreeRow {
     getAny(obj, ["Date_production", "Date production"])
   );
   r.Produit = (String(getAny(obj, ["Produit"]) ?? "").trim() as any) || "";
-
   const calibre = String(getAny(obj, ["Calibre"]) ?? "").trim();
   r.Calibre = calibre ? calibre : "nan";
-
   r.Qualite = (String(getAny(obj, ["Qualite"]) ?? "").trim() as any) || "nan";
   r["%_Ctrl"] = toNumberOrNull(getAny(obj, ["%_Ctrl", "% Ctrl", "%Ctrl"]));
   r.Gr_mn = toNumberOrNull(getAny(obj, ["Gr_mn", "Gr mn"]));
@@ -304,16 +271,13 @@ function mapObjectToRow(obj: Record<string, unknown>): EntreeRow {
   r.PU = toNumberOrNull(getAny(obj, ["PU"]));
   r.Colis = toNumberOrNull(getAny(obj, ["Colis"]));
   r.Quantite = toNumberOrNull(getAny(obj, ["Quantite"]));
-
   return r;
 }
-
 // -----------------------------
 // Page
 // -----------------------------
 export default function EntreePage() {
   const { can, loadingAccess, role } = useStockAccess();
-
   const canView = can("entree_view");
   const canCreate = can("entree_create");
   const canUpdate = can("entree_update");
@@ -321,41 +285,31 @@ export default function EntreePage() {
   const canImport = can("entree_import");
   const canExport = can("entree_export");
   const canSendParking = can("entree_send_parking");
-
   const canDuplicate = canCreate && canUpdate;
   const canSaveAnyChange = canCreate || canUpdate || canDelete;
-
   const apiRef = useGridApiRef();
-
   const [loading, setLoading] = React.useState(true);
-
   const [rows, setRows] = React.useState<EntreeRow[]>([]);
   const [lastSavedRows, setLastSavedRows] = React.useState<EntreeRow[]>([]);
   const [deletedIds, setDeletedIds] = React.useState<Set<string>>(new Set());
-
   const [selectedRowIds, setSelectedRowIds] =
     React.useState<GridRowSelectionModel>({
       type: "include",
       ids: new Set<GridRowId>(),
     });
-
   const [activeFilterForm, setActiveFilterForm] = React.useState<FilterForm>(() =>
     emptyFilterForm()
   );
   const [errorMessages, setErrorMessages] = React.useState<string[]>([]);
   const [info, setInfo] = React.useState<string>("");
-
   const [openFilter, setOpenFilter] = React.useState(false);
   const [filterForm, setFilterForm] = React.useState<FilterForm>(() =>
     emptyFilterForm()
   );
-
   const [openNew, setOpenNew] = React.useState(false);
   const [draft, setDraft] = React.useState<EntreeRow>(() => newDraftRow());
-
   // Keeps % Ctrl text as text while typing, so decimals like 53.67 work
   const [draftPctCtrlText, setDraftPctCtrlText] = React.useState("");
-
   const [openPark, setOpenPark] = React.useState(false);
   const [parkReservationId, setParkReservationId] =
     React.useState<string>("");
@@ -363,26 +317,20 @@ export default function EntreePage() {
   const [parkRows, setParkRows] = React.useState<
     Array<{ row: EntreeRow; maxQty: number; reserveQty: number }>
   >([]);
-
   const [openDeleteRows, setOpenDeleteRows] = React.useState(false);
-
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
-
   const hasUnsavedChanges = React.useMemo(() => {
     if (deletedIds.size) return true;
     return stableStringify(rows) !== stableStringify(lastSavedRows);
   }, [rows, lastSavedRows, deletedIds]);
-
   const selectedIdsArray = React.useMemo(
     () => Array.from(selectedRowIds.ids ?? []),
     [selectedRowIds]
   );
-
   const loadFromDb = React.useCallback(async () => {
     setLoading(true);
     setInfo("");
     setErrorMessages([]);
-
     try {
       const { data, error } = await supabase
         .from("entree")
@@ -390,9 +338,7 @@ export default function EntreePage() {
           "id, lot, code_prp, date_production, produit, calibre, qualite, pct_ctrl, gr_mn, gr_mx, emballage, pu, colis, quantite"
         )
         .order("created_at", { ascending: false });
-
       if (error) throw new Error(error.message);
-
       const ui = (data as any[]).map((r) => dbToUi(r as any));
       setRows(ui);
       setLastSavedRows(ui);
@@ -406,22 +352,17 @@ export default function EntreePage() {
       setLoading(false);
     }
   }, []);
-
   React.useEffect(() => {
     if (loadingAccess) return;
-
     if (!canView) {
       setLoading(false);
       return;
     }
-
     loadFromDb();
   }, [loadFromDb, loadingAccess, canView]);
-
   const handleCellClick = React.useCallback(
     (params: GridCellParams) => {
       if (!canUpdate) return;
-
       apiRef.current?.startCellEditMode({
         id: params.id,
         field: params.field,
@@ -429,7 +370,6 @@ export default function EntreePage() {
     },
     [apiRef, canUpdate]
   );
-
   const columns = React.useMemo<GridColDef<EntreeRow>[]>(() => {
     const numericCol = (
       field: keyof EntreeRow,
@@ -445,7 +385,6 @@ export default function EntreePage() {
       valueSetter: (value, row) =>
         ({ ...row, [field]: toNumberOrNull(value) }) as EntreeRow,
     });
-
     return [
       {
         field: "Lot",
@@ -522,52 +461,41 @@ export default function EntreePage() {
       numericCol("Quantite", "Quantite", 110),
     ];
   }, [canUpdate]);
-
   const openNewEntry = () => {
     if (!canCreate) {
       setErrorMessages(["Vous n'avez pas la permission d'ajouter une entrée."]);
       return;
     }
-
     setInfo("");
     setErrorMessages([]);
     setDraft(newDraftRow());
     setDraftPctCtrlText("");
     setOpenNew(true);
   };
-
   const saveNewEntry = async () => {
   if (!canCreate) {
     setErrorMessages(["Vous n'avez pas la permission d'ajouter une entrée."]);
     return;
   }
-
   const row: EntreeRow = {
     ...draft,
     id: makeTempId(),
     Calibre: draft.Calibre?.trim() ? draft.Calibre : "nan",
   };
-
   try {
     setInfo("");
     setErrorMessages([]);
-
     await ensureFreshSession();
-
     const { error: insertError } = await supabase
       .from("entree")
       .insert(uiToDbForInsert(row));
-
     if (insertError) {
       throw new Error(insertError.message);
     }
-
     setOpenNew(false);
     setDraft(newDraftRow());
     setDraftPctCtrlText("");
-
     await loadFromDb();
-
     setInfo("Nouvelle entrée sauvegardée directement dans la base de données.");
   } catch (e: any) {
     setErrorMessages([
@@ -575,103 +503,78 @@ export default function EntreePage() {
     ]);
   }
 };
-
   const handleSave = async () => {
     try {
       await ensureFreshSession();
-
       setInfo("");
       setErrorMessages([]);
-
       const lastSavedMap = new Map(lastSavedRows.map((row) => [row.id, row]));
-
       const existingChanged = rows.filter((row) => {
         if (isTempId(row.id)) return false;
-
         const saved = lastSavedMap.get(row.id);
-
         if (!saved) return true;
-
         return stableStringify(row) !== stableStringify(saved);
       });
-
       const fresh = rows.filter((row) => isTempId(row.id));
-
       if (deletedIds.size && !canDelete) {
         setErrorMessages(["Vous n'avez pas la permission de supprimer des entrées."]);
         return;
       }
-
       if (existingChanged.length && !canUpdate) {
         setErrorMessages([
           "Vous n'avez pas la permission de modifier les entrées existantes.",
         ]);
         return;
       }
-
       if (fresh.length && !canCreate) {
         setErrorMessages(["Vous n'avez pas la permission d'ajouter des entrées."]);
         return;
       }
-
       if (deletedIds.size) {
-        const ids = Array.from(deletedIds).filter((id) => !isTempId(id));
-
+        const ids = Array.from(deletedIds).map(String).filter((id) => !isTempId(id));
         if (ids.length) {
           const { error: delErr } = await supabase
             .from("entree")
             .delete()
             .in("id", ids);
-
           if (delErr) throw new Error(delErr.message);
         }
       }
-
       if (existingChanged.length) {
         const payloadUpsert = existingChanged.map(uiToDbForUpsert);
-
         const { error: upErr } = await supabase
           .from("entree")
           .upsert(payloadUpsert, { onConflict: "id" });
-
         if (upErr) throw new Error(upErr.message);
       }
-
       if (fresh.length) {
         const payloadInsert = fresh.map(uiToDbForInsert);
-
         const { error: insErr } = await supabase
           .from("entree")
           .insert(payloadInsert);
-
         if (insErr) throw new Error(insErr.message);
       }
-
       await loadFromDb();
       setInfo("Sauvegardé dans la base de données.");
     } catch (e: any) {
       setErrorMessages([e?.message ?? "La sauvegarde a échoué."]);
     }
   };
-
   const handleCancel = () => {
     setRows(lastSavedRows);
     setDeletedIds(new Set());
     setInfo("Dernière version sauvegardée restaurée.");
     setErrorMessages([]);
   };
-
   const handleRefresh = async () => {
     await loadFromDb();
     setInfo("Actualisé depuis la base de données.");
   };
-
   const handleExportXLSX = () => {
     if (!canExport) {
       setErrorMessages(["Vous n'avez pas la permission d'exporter les données."]);
       return;
     }
-
     const headers = [
       "Lot",
       "Code_Prp",
@@ -687,9 +590,7 @@ export default function EntreePage() {
       "Colis",
       "Quantite",
     ];
-
     const aoa: any[][] = [headers];
-
     rows.forEach((r) => {
       aoa.push([
         r.Lot,
@@ -707,63 +608,48 @@ export default function EntreePage() {
         r.Quantite,
       ]);
     });
-
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     const wb = XLSX.utils.book_new();
-
     XLSX.utils.book_append_sheet(wb, ws, "Entree");
     XLSX.writeFile(wb, `entree_${dayjs().format("YYYYMMDD_HHmm")}.xlsx`);
   };
-
   const handleClickImport = () => {
     if (!canImport) {
       setErrorMessages(["Vous n'avez pas la permission d'importer des données."]);
       return;
     }
-
     fileInputRef.current?.click();
   };
-
   const importFromXLSX = async (file: File) => {
     if (!canImport) {
       setErrorMessages(["Vous n'avez pas la permission d'importer des données."]);
       return;
     }
-
     setInfo("");
     setErrorMessages([]);
-
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: "array", cellDates: true });
     const sheetName = wb.SheetNames[0];
-
     if (!sheetName) {
       setErrorMessages(["XLSX has no sheets."]);
       return;
     }
-
     const ws = wb.Sheets[sheetName];
-
     const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
       defval: "",
       raw: true,
     });
-
     if (!json.length) {
       setErrorMessages(["XLSX sheet has no rows."]);
       return;
     }
-
     const imported = json.map(mapObjectToRow);
-
     setRows(imported);
     setDeletedIds(new Set());
     setInfo(`Imported ${imported.length} rows (not saved yet).`);
   };
-
   const hasAnyMultiFilter = (f: FilterForm) =>
     Object.values(f).some((v) => String(v ?? "").trim() !== "");
-
   const applyFilterFormToRows = (
     all: EntreeRow[],
     f: FilterForm
@@ -774,74 +660,69 @@ export default function EntreePage() {
     const calibre = f.Calibre.trim().toLowerCase();
     const qualite = f.Qualite.trim();
     const emballage = f.Emballage.trim();
-
     const dFrom = f.Date_from.trim() ? dayjs(f.Date_from.trim()) : null;
     const dTo = f.Date_to.trim() ? dayjs(f.Date_to.trim()) : null;
-
     const qMin = f.Quantite_min.trim()
       ? Number(f.Quantite_min.trim())
       : null;
     const qMax = f.Quantite_max.trim()
       ? Number(f.Quantite_max.trim())
       : null;
-
     return all.filter((r) => {
       if (lot && !String(r.Lot ?? "").toLowerCase().includes(lot)) {
         return false;
       }
-
       if (code && String(r.Code_Prp ?? "") !== code) {
         return false;
       }
-
       if (produit && String(r.Produit ?? "") !== produit) {
         return false;
       }
-
       if (calibre && !String(r.Calibre ?? "").toLowerCase().includes(calibre)) {
         return false;
       }
-
       if (qualite && String(r.Qualite ?? "") !== qualite) {
         return false;
       }
-
       if (emballage && String(r.Emballage ?? "") !== emballage) {
         return false;
       }
-
       if (dFrom || dTo) {
         const d = r.Date_production ? dayjs(r.Date_production) : null;
-
         if (!d || !d.isValid()) return false;
         if (dFrom && d.isBefore(dFrom, "day")) return false;
         if (dTo && d.isAfter(dTo, "day")) return false;
       }
-
       const qty = Number(r.Quantite ?? 0);
-
       if (qMin != null && Number.isFinite(qMin) && qty < qMin) {
         return false;
       }
-
       if (qMax != null && Number.isFinite(qMax) && qty > qMax) {
         return false;
       }
-
       return true;
     });
   };
-
   const displayRows = React.useMemo(() => {
-    if (!hasAnyMultiFilter(activeFilterForm)) {
-      return rows;
-    }
-
+    if (!hasAnyMultiFilter(activeFilterForm)) return rows;
     return applyFilterFormToRows(rows, activeFilterForm);
   }, [rows, activeFilterForm]);
-
+  const activeFilterCount = React.useMemo(() => {
+    return Object.values(activeFilterForm).filter((v) => String(v ?? "").trim() !== "").length;
+  }, [activeFilterForm]);
+  const selectedRowsSummary = React.useMemo(() => {
+    const selected = rows.filter((row) => selectedIdsArray.includes(row.id));
+    const quantite = selected.reduce((acc, row) => acc + Number(row.Quantite ?? 0), 0);
+    const colis = selected.reduce((acc, row) => acc + Number(row.Colis ?? 0), 0);
+    return { count: selected.length, quantite, colis };
+  }, [rows, selectedIdsArray]);
+  const stockSummary = React.useMemo(() => {
+    const totalQty = rows.reduce((acc, row) => acc + Number(row.Quantite ?? 0), 0);
+    const visibleQty = displayRows.reduce((acc, row) => acc + Number(row.Quantite ?? 0), 0);
+    const totalColis = rows.reduce((acc, row) => acc + Number(row.Colis ?? 0), 0);
+    return { totalQty, visibleQty, totalColis };
+  }, [rows, displayRows]);
   const openFilterDialog = () => setOpenFilter(true);
-
   const applyFilter = () => {
     if (!hasAnyMultiFilter(filterForm)) {
       setActiveFilterForm(emptyFilterForm());
@@ -849,151 +730,118 @@ export default function EntreePage() {
       setInfo("Filter cleared.");
       return;
     }
-
     setActiveFilterForm({ ...filterForm });
     setOpenFilter(false);
     setInfo("Filter applied.");
   };
-
   const clearFilter = () => {
     setFilterForm(emptyFilterForm());
     setActiveFilterForm(emptyFilterForm());
     setInfo("Filter cleared.");
   };
-
   const duplicateSelectedRow = () => {
     if (!canDuplicate) {
       setErrorMessages(["Vous n'avez pas la permission de dupliquer une entrée."]);
       return;
     }
-
     if (selectedIdsArray.length !== 1) {
       setErrorMessages(["Sélectionnez exactement une ligne à dupliquer."]);
       return;
     }
-
    const selectedId = String(selectedIdsArray[0]);
    const sourceIndex = rows.findIndex((r) => String(r.id) === selectedId);
-
     if (sourceIndex === -1) {
       setErrorMessages(["La ligne sélectionnée est introuvable."]);
       return;
     }
-
    const sourceRow = rows[sourceIndex];
-
    const duplicatedRow: EntreeRow = {
       ...sourceRow,
       id: makeTempId(),
       Calibre: sourceRow.Calibre?.trim() ? sourceRow.Calibre : "nan",
     };
-
    const nextRows = [...rows];
    nextRows.splice(sourceIndex, 0, duplicatedRow);
-
    setRows(nextRows);
-
    setSelectedRowIds({
       type: "include",
       ids: new Set<GridRowId>([duplicatedRow.id]),
     } as any);
-
     setErrorMessages([]);
     setInfo("Ligne dupliquée. Modifiez la copie, puis cliquez sur Sauvegarder.");
   };
-
   const openDeleteSelected = () => {
     if (!canDelete) {
       setErrorMessages(["Vous n'avez pas la permission de supprimer des entrées."]);
       return;
     }
-
     if (!selectedIdsArray.length) {
       setErrorMessages(["Sélectionnez au moins une ligne à supprimer."]);
       return;
     }
-
     setErrorMessages([]);
     setInfo("");
     setOpenDeleteRows(true);
   };
-
   const confirmDeleteSelected = () => {
     if (!canDelete) {
       setErrorMessages(["Vous n'avez pas la permission de supprimer des entrées."]);
       return;
     }
-
     const idsToDelete = new Set(selectedIdsArray.map(String));
-
     setDeletedIds((prev) => {
       const next = new Set(prev);
-
       for (const id of idsToDelete) {
         if (!isTempId(String(id))) {
           next.add(String(id));
         }
       }
-
       return next;
     });
-
     const updated = rows.filter((r) => !idsToDelete.has(String(r.id)));
-
     setRows(updated);
     setSelectedRowIds({ type: "include", ids: new Set() } as any);
     setOpenDeleteRows(false);
     setInfo(`Deleted ${selectedIdsArray.length} row(s) (not saved yet).`);
   };
-
   const openParkDialog = () => {
     setInfo("");
     setErrorMessages([]);
-
     if (!canSendParking) {
       setErrorMessages(["Vous n'avez pas la permission d'envoyer vers Parking."]);
       return;
     }
-
     if (!hasAnyMultiFilter(activeFilterForm)) {
       setErrorMessages([
         "Please click Filter and apply a filter to the Entrée table first, then click Park.",
       ]);
       return;
     }
-
     const targets = applyFilterFormToRows(rows, activeFilterForm);
-
     const hasTemp = targets.some((r) => isTempId(r.id));
-
     if (hasTemp) {
       setErrorMessages([
         "Some filtered rows are not saved to DB yet. Please Save first, then Park.",
       ]);
       return;
     }
-
     if (!targets.length) {
       setErrorMessages(["No rows match your filter. Adjust the filter and try again."]);
       return;
     }
-
     const prepared = targets.map((r) => {
       const maxQty = Number(r.Quantite ?? 0);
-
       return {
         row: r,
         maxQty,
         reserveQty: maxQty > 0 ? Math.min(1, maxQty) : 0,
       };
     });
-
     setParkRows(prepared);
     setParkReservationId("");
     setParkClient("");
     setOpenPark(true);
   };
-
   const confirmPark = async () => {
     try {
       await ensureFreshSession();
@@ -1001,71 +849,56 @@ export default function EntreePage() {
         setErrorMessages(["Vous n'avez pas la permission d'envoyer vers Parking."]);
         return;
       }
-
       const rid = Number(parkReservationId);
-
       if (!Number.isFinite(rid) || rid <= 0) {
         setErrorMessages(["Reservation ID must be a positive number."]);
         return;
       }
-
       if (!parkClient) {
         setErrorMessages(["Please choose a client."]);
         return;
       }
-
       for (const it of parkRows) {
         if (it.reserveQty < 0) {
           setErrorMessages(["Reserved quantity cannot be negative."]);
           return;
         }
-
         if (it.reserveQty > it.maxQty) {
           setErrorMessages(["You cannot reserve more than available Quantite."]);
           return;
         }
       }
-
       const anyReserved = parkRows.some((x) => x.reserveQty > 0);
-
       if (!anyReserved) {
         setErrorMessages(["Reserve at least 1 quantity on at least one row."]);
         return;
       }
-
       const { data: exists, error: exErr } = await supabase
         .from("parking_reservations")
         .select("reservation_id")
         .eq("reservation_id", rid)
         .maybeSingle();
-
       if (exErr) throw new Error(exErr.message);
-
       if (exists) {
         setErrorMessages([`Reservation ID ${rid} already exists. Choose another.`]);
         return;
       }
-
       const { error: insResErr } = await supabase
         .from("parking_reservations")
         .insert({
           reservation_id: rid,
           client: parkClient,
         });
-
       if (insResErr) throw new Error(insResErr.message);
-
       const items: ParkingItem[] = parkRows
         .filter((p) => p.reserveQty > 0)
         .map((p) => {
           const qtyTotal = Number(p.row.Quantite ?? 0);
           const colisTotal = p.row.Colis == null ? null : Number(p.row.Colis);
-
           const reservedColis =
             colisTotal != null && Number.isFinite(colisTotal) && qtyTotal > 0
               ? (Number(p.reserveQty) / qtyTotal) * colisTotal
               : null;
-
           return {
             entreeRowId: p.row.id,
             Lot: p.row.Lot,
@@ -1077,7 +910,6 @@ export default function EntreePage() {
             reservedColis,
           };
         });
-
       const itemPayload = items.map((it) => ({
         reservation_id: rid,
         entree_id: it.entreeRowId || null,
@@ -1089,48 +921,35 @@ export default function EntreePage() {
         reserved_qty: it.reservedQty,
         reserved_colis: it.reservedColis,
       }));
-
       const { error: insItemsErr } = await supabase
         .from("parking_items")
         .insert(itemPayload);
-
       if (insItemsErr) throw new Error(insItemsErr.message);
-
       const updatedRows = rows.map((r) => {
         const match = parkRows.find((p) => p.row.id === r.id);
-
         if (!match) return r;
-
         const current = Number(r.Quantite ?? 0);
         const reserved = Number(match.reserveQty ?? 0);
-
         return {
           ...r,
           Quantite: Math.max(0, current - reserved),
         };
       });
-
       const affected = parkRows
         .filter((p) => p.reserveQty > 0)
         .map((p) => p.row.id);
-
-      const affectedMap = new Map(updatedRows.map((r) => [r.id, r]));
-
+      const affectedMap = new Map<string, EntreeRow>(updatedRows.map((r) => [r.id, r]));
       const updates = affected.map((id) => {
         const r = affectedMap.get(id)!;
-
         return {
           id: r.id,
           quantite: r.Quantite,
         };
       });
-
       const { error: updErr } = await supabase
         .from("entree")
         .upsert(updates, { onConflict: "id" });
-
       if (updErr) throw new Error(updErr.message);
-
       setRows(updatedRows);
       setLastSavedRows(updatedRows);
       setOpenPark(false);
@@ -1140,182 +959,139 @@ export default function EntreePage() {
       setErrorMessages([e?.message ?? "Park failed."]);
     }
   };
-
   if (loadingAccess) {
     return (
       <Stack alignItems="center" spacing={2} sx={{ py: 8 }}>
         <CircularProgress />
-
         <Typography variant="body2" sx={{ color: "text.secondary" }}>
           Chargement des permissions...
         </Typography>
       </Stack>
     );
   }
-
   if (!canView) {
-    return (
-      <Alert severity="warning">
-        Vous n'avez pas accès à la page Entrée.
-      </Alert>
-    );
+    return <Alert severity="warning">Vous n'avez pas accès à la page Entrée.</Alert>;
   }
-
   return (
-    <Stack spacing={2}>
-      <Stack
-        direction="row"
-        alignItems="flex-start"
-        justifyContent="space-between"
-        spacing={2}
+    <Stack spacing={2.25}>
+      <Paper
+        elevation={0}
+        sx={{
+          p: { xs: 2, md: 2.5 },
+          borderRadius: 4,
+          color: "white",
+          background: "linear-gradient(135deg, #0f172a 0%, #1d4ed8 55%, #0284c7 100%)",
+          overflow: "hidden",
+          position: "relative",
+        }}
       >
-        <Box>
-          <Typography variant="h5">Entrée</Typography>
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Base de données des entrées de produits.
-          </Typography>
-        </Box>
-
-        <Stack direction="row" spacing={1} alignItems="center">
-          {hasUnsavedChanges ? (
-            <Chip color="warning" label="Modifications non sauvegardées" />
-          ) : (
-            <Chip color="success" label="Sauvegardé" />
-          )}
-
-          <Chip
-            variant="outlined"
-            label={
-              hasAnyMultiFilter(activeFilterForm)
-                ? `Rows: ${displayRows.length}/${rows.length}`
-                : `Rows: ${rows.length}`
-            }
-          />
-
-          {loading ? (
-            <Chip color="info" label="Chargement..." />
-          ) : (
-            <Chip color="success" label="Live" />
-          )}
-        </Stack>
-      </Stack>
-
-      <Paper sx={{ p: 1.2, borderRadius: 3 }}>
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-          <Button variant="outlined" onClick={handleRefresh} disabled={loading}>
-            Actualiser
-          </Button>
-
-          <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
-
-          <Button variant="contained" onClick={openNewEntry} disabled={!canCreate}>
-            Nouvelle entrée
-          </Button>
-
-          <Button
-            variant="outlined"
-            onClick={duplicateSelectedRow}
-            disabled={!canDuplicate || selectedIdsArray.length !== 1}
-          >
-            Dupliquer
-          </Button>
-
-          <Button
-            variant="outlined"
-            onClick={handleSave}
-            disabled={!canSaveAnyChange || !hasUnsavedChanges}
-          >
-            Sauvegarder
-          </Button>
-
-          <Button variant="text" onClick={handleCancel} disabled={!hasUnsavedChanges}>
-            Annuler
-          </Button>
-
-          <Button
-            variant="outlined"
-            color="error"
-            onClick={openDeleteSelected}
-            disabled={!canDelete || !selectedIdsArray.length}
-          >
-            Supprimer
-          </Button>
-
-          <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
-
-          <Button variant="outlined" onClick={openFilterDialog}>
-            Filtrer
-          </Button>
-
-          <Button variant="text" onClick={clearFilter}>
-            Réinitialiser filtre
-          </Button>
-
-          <Button
-            variant="contained"
-            color="secondary"
-            onClick={openParkDialog}
-            disabled={!canSendParking}
-          >
-            Envoyer au parking
-          </Button>
-
-          <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
-
-          <Button variant="outlined" onClick={handleExportXLSX} disabled={!canExport}>
-            Exporter XLSX
-          </Button>
-
-          <Button variant="outlined" onClick={handleClickImport} disabled={!canImport}>
-            Importer XLSX
-          </Button>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-
-              if (file) {
-                importFromXLSX(file);
-              }
-            }}
-          />
-
-          <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
-
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Rôle: {" "}
-            <Box
-              component="span"
-              sx={{
-                fontWeight: 700,
-                color: role === "superuser" ? "error.main" : "text.primary",
-              }}
-            >
-              {role}
-            </Box>
-          </Typography>
+        <Box sx={{ position: "absolute", inset: 0, opacity: 0.14, background: "radial-gradient(circle at 85% 20%, #ffffff 0, transparent 34%)" }} />
+        <Stack direction={{ xs: "column", md: "row" }} alignItems={{ xs: "flex-start", md: "center" }} justifyContent="space-between" spacing={2} sx={{ position: "relative" }}>
+          <Box>
+            <Typography variant="h4" sx={{ fontWeight: 950, letterSpacing: -0.5 }}>
+              Entrée stock
+            </Typography>
+            <Typography variant="body2" sx={{ opacity: 0.84, mt: 0.5, maxWidth: 760 }}>
+              Réception, contrôle et stock disponible avant réservation client.
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+            <Chip
+              label={hasUnsavedChanges ? "Modifications non sauvegardées" : "Sauvegardé"}
+              color={hasUnsavedChanges ? "warning" : "success"}
+              sx={{ fontWeight: 900 }}
+            />
+            <Chip label={loading ? "Chargement..." : "En ligne"} sx={{ bgcolor: "rgba(255,255,255,0.16)", color: "white", fontWeight: 900 }} />
+            <Chip label={`Rôle: ${role || "user"}`} sx={{ bgcolor: "rgba(255,255,255,0.16)", color: "white", fontWeight: 900 }} />
+          </Stack>
         </Stack>
       </Paper>
-
+      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" }, gap: 1.5 }}>
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+          <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 800 }}>Lignes affichées</Typography>
+          <Typography variant="h5" sx={{ fontWeight: 950 }}>{displayRows.length}/{rows.length}</Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>Après filtre actif.</Typography>
+        </Paper>
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+          <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 800 }}>Quantité visible</Typography>
+          <Typography variant="h5" sx={{ fontWeight: 950 }}>{formatNumber(stockSummary.visibleQty)}</Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>Total quantité dans la vue.</Typography>
+        </Paper>
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+          <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 800 }}>Colis total</Typography>
+          <Typography variant="h5" sx={{ fontWeight: 950 }}>{formatNumber(stockSummary.totalColis)}</Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>Toutes les lignes chargées.</Typography>
+        </Paper>
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+          <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 800 }}>Sélection</Typography>
+          <Typography variant="h5" sx={{ fontWeight: 950 }}>{selectedRowsSummary.count}</Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>{formatNumber(selectedRowsSummary.quantite)} quantité sélectionnée.</Typography>
+        </Paper>
+      </Box>
+      <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 3, bgcolor: "background.paper" }}>
+        <Stack direction={{ xs: "column", lg: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", lg: "center" }} spacing={1.5}>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+            <Button variant="outlined" onClick={handleRefresh} disabled={loading}>Actualiser</Button>
+            <Button variant="contained" onClick={openNewEntry} disabled={!canCreate}>Nouvelle entrée</Button>
+            <Button variant="outlined" onClick={duplicateSelectedRow} disabled={!canDuplicate || selectedIdsArray.length !== 1}>Dupliquer</Button>
+            <Button variant="outlined" onClick={handleSave} disabled={!canSaveAnyChange || !hasUnsavedChanges}>Sauvegarder</Button>
+            <Button variant="text" onClick={handleCancel} disabled={!hasUnsavedChanges}>Annuler</Button>
+            <Button variant="outlined" color="error" onClick={openDeleteSelected} disabled={!canDelete || !selectedIdsArray.length}>Supprimer</Button>
+          </Stack>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+            <Button variant={activeFilterCount ? "contained" : "outlined"} onClick={openFilterDialog}>
+              {activeFilterCount ? `Filtres (${activeFilterCount})` : "Filtrer"}
+            </Button>
+            <Button variant="text" onClick={clearFilter} disabled={!activeFilterCount}>Réinitialiser</Button>
+            <Button variant="contained" color="secondary" onClick={openParkDialog} disabled={!canSendParking}>Envoyer au parking</Button>
+            <Button variant="outlined" onClick={handleExportXLSX} disabled={!canExport}>Exporter</Button>
+            <Button variant="outlined" onClick={handleClickImport} disabled={!canImport}>Importer</Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) importFromXLSX(file);
+              }}
+            />
+          </Stack>
+        </Stack>
+      </Paper>
+      {selectedRowsSummary.count ? (
+        <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 3, bgcolor: "#f8fafc" }}>
+          <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} spacing={1}>
+            <Typography variant="body2" sx={{ fontWeight: 900 }}>
+              {selectedRowsSummary.count} ligne(s) sélectionnée(s) · {formatNumber(selectedRowsSummary.colis)} colis · {formatNumber(selectedRowsSummary.quantite)} quantité
+            </Typography>
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
+              Utilisez la sélection pour dupliquer, supprimer ou préparer les contrôles avant parking.
+            </Typography>
+          </Stack>
+        </Paper>
+      ) : null}
       {info ? <Alert severity="success">{info}</Alert> : null}
-
       {errorMessages.length ? (
         <Alert severity="warning">
-          <Stack spacing={0.5}>
-            {errorMessages.slice(0, 12).map((m, i) => (
-              <div key={i}>{m}</div>
-            ))}
-          </Stack>
+          <Stack spacing={0.5}>{errorMessages.slice(0, 12).map((m, i) => <div key={i}>{m}</div>)}</Stack>
         </Alert>
       ) : null}
-
-      <Paper sx={{ p: 1.2, borderRadius: 3 }}>
-        <Box sx={{ height: 640, width: "100%" }}>
+      <Paper variant="outlined" sx={{ borderRadius: 3, overflow: "hidden", bgcolor: "background.paper" }}>
+        <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} spacing={1} sx={{ p: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
+          <Box>
+            <Typography variant="subtitle1" sx={{ fontWeight: 950 }}>Table Entrée</Typography>
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
+              Double-cliquez ou cliquez dans une cellule pour modifier selon vos permissions.
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1} flexWrap="wrap">
+            <Chip size="small" variant="outlined" label={`Total: ${formatNumber(stockSummary.totalQty)}`} />
+            {activeFilterCount ? <Chip size="small" color="primary" label={`${activeFilterCount} filtre(s)`} /> : null}
+          </Stack>
+        </Stack>
+        <Box sx={{ height: { xs: 560, md: 690 }, width: "100%" }}>
           <DataGrid
             apiRef={apiRef}
             rows={displayRows}
@@ -1329,25 +1105,22 @@ export default function EntreePage() {
             onRowSelectionModelChange={(m) => setSelectedRowIds(m as any)}
             loading={loading}
             slots={{ toolbar: GridToolbar }}
-            slotProps={{ toolbar: { showQuickFilter: false } as any }}
+            slotProps={{ toolbar: { showQuickFilter: true } as any }}
             onCellClick={handleCellClick}
             processRowUpdate={(newRow: EntreeRow) => {
-              const cleaned: EntreeRow = {
-                ...newRow,
-                Calibre: newRow.Calibre?.trim() ? newRow.Calibre : "nan",
-              };
-
-              setRows((prev) =>
-                prev.map((r) => (r.id === cleaned.id ? cleaned : r))
-              );
-
+              const cleaned: EntreeRow = { ...newRow, Calibre: newRow.Calibre?.trim() ? newRow.Calibre : "nan" };
+              setRows((prev) => prev.map((r) => (r.id === cleaned.id ? cleaned : r)));
               return cleaned;
             }}
             isCellEditable={() => canUpdate}
+            sx={{
+              border: 0,
+              "& .MuiDataGrid-columnHeaders": { bgcolor: "#f8fafc", fontWeight: 900 },
+              "& .MuiDataGrid-row:hover": { bgcolor: "#f8fafc" },
+            }}
           />
         </Box>
       </Paper>
-
       {/* DELETE dialog */}
       <Dialog
         open={openDeleteRows}
@@ -1356,28 +1129,23 @@ export default function EntreePage() {
         fullWidth
       >
         <DialogTitle>Supprimer les lignes sélectionnées</DialogTitle>
-
         <DialogContent>
           <Typography variant="body2">
             Are you sure you want to delete <b>{selectedIdsArray.length}</b>{" "}
             row(s)?
           </Typography>
-
           <Typography variant="body2" sx={{ color: "text.secondary", mt: 1 }}>
             This will remove them from the grid. Click <b>Save</b> to persist to
             DB.
           </Typography>
         </DialogContent>
-
         <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setOpenDeleteRows(false)}>Annuler</Button>
-
           <Button variant="contained" color="error" onClick={confirmDeleteSelected}>
             Delete
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* FILTER dialog */}
       <Dialog
         open={openFilter}
@@ -1386,7 +1154,6 @@ export default function EntreePage() {
         fullWidth
       >
         <DialogTitle>Filter Entrée</DialogTitle>
-
         <DialogContent sx={{ mt: 1 }}>
           <FilterRow>
             <TextField
@@ -1400,10 +1167,8 @@ export default function EntreePage() {
               }
               fullWidth
             />
-
             <FormControl fullWidth>
               <InputLabel>Code_Prp</InputLabel>
-
               <Select
                 label="Code_Prp"
                 value={filterForm.Code_Prp}
@@ -1415,7 +1180,6 @@ export default function EntreePage() {
                 }
               >
                 <MenuItem value="">(any)</MenuItem>
-
                 {CODE_PRP_OPTIONS.map((o) => (
                   <MenuItem key={o} value={o}>
                     {o}
@@ -1423,10 +1187,8 @@ export default function EntreePage() {
                 ))}
               </Select>
             </FormControl>
-
             <FormControl fullWidth>
               <InputLabel>Produit</InputLabel>
-
               <Select
                 label="Produit"
                 value={filterForm.Produit}
@@ -1438,7 +1200,6 @@ export default function EntreePage() {
                 }
               >
                 <MenuItem value="">(any)</MenuItem>
-
                 {PRODUIT_OPTIONS.map((o) => (
                   <MenuItem key={o} value={o}>
                     {o}
@@ -1447,7 +1208,6 @@ export default function EntreePage() {
               </Select>
             </FormControl>
           </FilterRow>
-
           <FilterRow>
             <TextField
               label="Calibre contains"
@@ -1460,10 +1220,8 @@ export default function EntreePage() {
               }
               fullWidth
             />
-
             <FormControl fullWidth>
               <InputLabel>Qualite</InputLabel>
-
               <Select
                 label="Qualite"
                 value={filterForm.Qualite}
@@ -1475,7 +1233,6 @@ export default function EntreePage() {
                 }
               >
                 <MenuItem value="">(any)</MenuItem>
-
                 {QUALITE_OPTIONS.map((o) => (
                   <MenuItem key={o} value={o}>
                     {o}
@@ -1483,10 +1240,8 @@ export default function EntreePage() {
                 ))}
               </Select>
             </FormControl>
-
             <FormControl fullWidth>
               <InputLabel>Emballage</InputLabel>
-
               <Select
                 label="Emballage"
                 value={filterForm.Emballage}
@@ -1498,7 +1253,6 @@ export default function EntreePage() {
                 }
               >
                 <MenuItem value="">(any)</MenuItem>
-
                 {EMBALLAGE_OPTIONS.map((o) => (
                   <MenuItem key={o} value={o}>
                     {o}
@@ -1507,7 +1261,6 @@ export default function EntreePage() {
               </Select>
             </FormControl>
           </FilterRow>
-
           <FilterRow>
             <TextField
               label="Date from"
@@ -1522,7 +1275,6 @@ export default function EntreePage() {
               InputLabelProps={{ shrink: true }}
               fullWidth
             />
-
             <TextField
               label="Date to"
               type="date"
@@ -1536,7 +1288,6 @@ export default function EntreePage() {
               InputLabelProps={{ shrink: true }}
               fullWidth
             />
-
             <TextField
               label="Quantite min"
               type="number"
@@ -1549,7 +1300,6 @@ export default function EntreePage() {
               }
               fullWidth
             />
-
             <TextField
               label="Quantite max"
               type="number"
@@ -1564,18 +1314,14 @@ export default function EntreePage() {
             />
           </FilterRow>
         </DialogContent>
-
         <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setOpenFilter(false)}>Annuler</Button>
-
           <Button onClick={() => setFilterForm(emptyFilterForm())}>Reset</Button>
-
           <Button variant="contained" onClick={applyFilter}>
             Apply
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* Nouvelle entrée dialog */}
       <Dialog
         open={openNew}
@@ -1584,7 +1330,6 @@ export default function EntreePage() {
         fullWidth
       >
         <DialogTitle>Nouvelle entrée</DialogTitle>
-
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
@@ -1599,10 +1344,8 @@ export default function EntreePage() {
                 }
                 fullWidth
               />
-
               <FormControl fullWidth>
                 <InputLabel>Code_Prp</InputLabel>
-
                 <Select
                   label="Code_Prp"
                   value={draft.Code_Prp}
@@ -1614,7 +1357,6 @@ export default function EntreePage() {
                   }
                 >
                   <MenuItem value="">(empty)</MenuItem>
-
                   {CODE_PRP_OPTIONS.map((o) => (
                     <MenuItem key={o} value={o}>
                       {o}
@@ -1622,7 +1364,6 @@ export default function EntreePage() {
                   ))}
                 </Select>
               </FormControl>
-
               <TextField
                 label="Date production"
                 type="date"
@@ -1637,11 +1378,9 @@ export default function EntreePage() {
                 fullWidth
               />
             </Stack>
-
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
               <FormControl fullWidth>
                 <InputLabel>Produit</InputLabel>
-
                 <Select
                   label="Produit"
                   value={draft.Produit}
@@ -1653,7 +1392,6 @@ export default function EntreePage() {
                   }
                 >
                   <MenuItem value="">(empty)</MenuItem>
-
                   {PRODUIT_OPTIONS.map((o) => (
                     <MenuItem key={o} value={o}>
                       {o}
@@ -1661,10 +1399,8 @@ export default function EntreePage() {
                   ))}
                 </Select>
               </FormControl>
-
               <FormControl fullWidth>
                 <InputLabel>Calibre</InputLabel>
-
                 <Select
                   label="Calibre"
                   value={draft.Calibre}
@@ -1676,7 +1412,6 @@ export default function EntreePage() {
                   }
                 >
                   <MenuItem value="nan">nan</MenuItem>
-
                   {draft.Produit
                     ? CALIBRE_BY_PRODUIT[draft.Produit].map((o) => (
                         <MenuItem key={o} value={o}>
@@ -1686,10 +1421,8 @@ export default function EntreePage() {
                     : null}
                 </Select>
               </FormControl>
-
               <FormControl fullWidth>
                 <InputLabel>Qualite</InputLabel>
-
                 <Select
                   label="Qualite"
                   value={draft.Qualite}
@@ -1708,14 +1441,12 @@ export default function EntreePage() {
                 </Select>
               </FormControl>
             </Stack>
-
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
               <TextField
                 label="% Ctrl"
                 value={draftPctCtrlText}
                 onChange={(e) => {
                   const value = e.target.value.replace(",", ".");
-
                   if (value === "") {
                     setDraftPctCtrlText("");
                     setDraft((p) => ({
@@ -1724,12 +1455,9 @@ export default function EntreePage() {
                     }));
                     return;
                   }
-
                   if (/^\d*\.?\d*$/.test(value)) {
                     setDraftPctCtrlText(value);
-
                     const numberValue = Number(value);
-
                     setDraft((p) => ({
                       ...p,
                       "%_Ctrl": Number.isFinite(numberValue)
@@ -1743,7 +1471,6 @@ export default function EntreePage() {
                 }}
                 fullWidth
               />
-
               <TextField
                 label="Gr mn"
                 value={draft.Gr_mn ?? ""}
@@ -1755,7 +1482,6 @@ export default function EntreePage() {
                 }
                 fullWidth
               />
-
               <TextField
                 label="Gr mx"
                 value={draft.Gr_mx ?? ""}
@@ -1768,11 +1494,9 @@ export default function EntreePage() {
                 fullWidth
               />
             </Stack>
-
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
               <FormControl fullWidth>
                 <InputLabel>Emballage</InputLabel>
-
                 <Select
                   label="Emballage"
                   value={draft.Emballage}
@@ -1784,7 +1508,6 @@ export default function EntreePage() {
                   }
                 >
                   <MenuItem value="">(empty)</MenuItem>
-
                   {EMBALLAGE_OPTIONS.map((o) => (
                     <MenuItem key={o} value={o}>
                       {o}
@@ -1792,7 +1515,6 @@ export default function EntreePage() {
                   ))}
                 </Select>
               </FormControl>
-
               <TextField
                 label="PU"
                 value={draft.PU ?? ""}
@@ -1804,7 +1526,6 @@ export default function EntreePage() {
                 }
                 fullWidth
               />
-
               <TextField
                 label="Colis"
                 value={draft.Colis ?? ""}
@@ -1816,7 +1537,6 @@ export default function EntreePage() {
                 }
                 fullWidth
               />
-
               <TextField
                 label="Quantite"
                 value={draft.Quantite ?? ""}
@@ -1831,16 +1551,13 @@ export default function EntreePage() {
             </Stack>
           </Stack>
         </DialogContent>
-
         <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setOpenNew(false)}>Annuler</Button>
-
           <Button variant="contained" onClick={saveNewEntry}>
             Sauvegarder
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* Park dialog */}
       <Dialog
         open={openPark}
@@ -1849,7 +1566,6 @@ export default function EntreePage() {
         fullWidth
       >
         <DialogTitle>Envoyer au parking</DialogTitle>
-
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
@@ -1859,17 +1575,14 @@ export default function EntreePage() {
                 onChange={(e) => setParkReservationId(e.target.value)}
                 fullWidth
               />
-
               <FormControl fullWidth>
                 <InputLabel>Client</InputLabel>
-
                 <Select
                   label="Client"
                   value={parkClient}
                   onChange={(e) => setParkClient(e.target.value)}
                 >
                   <MenuItem value="">(choose)</MenuItem>
-
                   {CLIENTS.map((c) => (
                     <MenuItem key={c} value={c}>
                       {c}
@@ -1878,7 +1591,6 @@ export default function EntreePage() {
                 </Select>
               </FormControl>
             </Stack>
-
             <Paper variant="outlined" sx={{ borderRadius: 2 }}>
               <Table size="small">
                 <TableHead>
@@ -1890,7 +1602,6 @@ export default function EntreePage() {
                     <TableCell align="right">Reserve</TableCell>
                   </TableRow>
                 </TableHead>
-
                 <TableBody>
                   {parkRows.map((p, idx) => (
                     <TableRow key={p.row.id}>
@@ -1898,7 +1609,6 @@ export default function EntreePage() {
                       <TableCell>{p.row.Produit}</TableCell>
                       <TableCell>{p.row.Calibre}</TableCell>
                       <TableCell align="right">{p.maxQty}</TableCell>
-
                       <TableCell align="right" sx={{ width: 180 }}>
                         <TextField
                           value={p.reserveQty}
@@ -1906,7 +1616,6 @@ export default function EntreePage() {
                           inputProps={{ min: 0, max: p.maxQty }}
                           onChange={(e) => {
                             const v = Number(e.target.value);
-
                             setParkRows((prev) =>
                               prev.map((x, i) =>
                                 i === idx
@@ -1928,10 +1637,8 @@ export default function EntreePage() {
             </Paper>
           </Stack>
         </DialogContent>
-
         <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setOpenPark(false)}>Annuler</Button>
-
           <Button variant="contained" color="secondary" onClick={confirmPark}>
             Confirmer
           </Button>
