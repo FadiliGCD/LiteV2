@@ -1,6 +1,15 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
-import { Alert, Box, Button, Paper, Stack, TextField, Typography, Divider } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  Divider,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import AppFooter from "../components/AppFooter";
 import { signInWithEmail } from "../auth/auth";
 
@@ -13,11 +22,26 @@ export default function LoginPage() {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string>("");
   const [info, setInfo] = React.useState<string>("");
+  const [updateMessage, setUpdateMessage] = React.useState("");
+
+  React.useEffect(() => {
+    try {
+      const message = sessionStorage.getItem("lite-v2.update-message");
+
+      if (message) {
+        setUpdateMessage(message);
+        sessionStorage.removeItem("lite-v2.update-message");
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const onLogin = async () => {
     setError("");
     setInfo("");
     setLoading(true);
+
     try {
       await signInWithEmail(email.trim(), password);
       nav("/modules", { replace: true });
@@ -25,6 +49,12 @@ export default function LoginPage() {
       setError(e?.message ?? "Login failed");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter" && !loading) {
+      void onLogin();
     }
   };
 
@@ -65,11 +95,16 @@ export default function LoginPage() {
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
               Sign in
             </Typography>
+
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
               Use your email + password.
             </Typography>
 
             <Divider />
+
+            {updateMessage ? (
+              <Alert severity="info">{updateMessage}</Alert>
+            ) : null}
 
             {info ? <Alert severity="success">{info}</Alert> : null}
             {error ? <Alert severity="error">{error}</Alert> : null}
@@ -78,14 +113,17 @@ export default function LoginPage() {
               label="Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={onKeyDown}
               autoComplete="email"
               fullWidth
             />
+
             <TextField
               label="Password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={onKeyDown}
               autoComplete="current-password"
               fullWidth
             />
@@ -95,7 +133,7 @@ export default function LoginPage() {
                 variant="contained"
                 size="large"
                 onClick={onLogin}
-                disabled={loading}
+                disabled={loading || !email.trim() || !password}
                 fullWidth
               >
                 {loading ? "Please wait..." : "Login"}
@@ -103,7 +141,8 @@ export default function LoginPage() {
             </Stack>
 
             <Typography variant="caption" sx={{ color: "text.secondary" }}>
-              In case you forget your password, please contact the administrator to reset it for you.
+              In case you forget your password, please contact the administrator
+              to reset it for you.
             </Typography>
           </Stack>
         </Paper>
