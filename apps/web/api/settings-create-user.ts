@@ -229,7 +229,7 @@ export default {
         actor_user_id: actor.id,
         actor_email: actor.email ?? null,
         actor_role: actorProfile.role,
-        action: "CREATE_USER",
+        action: "SETTINGS_CREATE_USER",
         module: "settings",
         table_name: "profiles",
         row_id: userId,
