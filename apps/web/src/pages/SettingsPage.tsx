@@ -46,6 +46,8 @@ import {
 
   Tabs,
 
+  TextField,
+
   Typography,
 
 } from "@mui/material";
@@ -145,6 +147,17 @@ type EditDraft = {
   can_manage_hr: boolean;
 
   can_manage_employees: boolean;
+
+};
+
+
+type CreateDraft = EditDraft & {
+
+  email: string;
+
+  username: string;
+
+  password: string;
 
 };
 
@@ -444,6 +457,34 @@ function makeEditDraft(profile: ProfileRow): EditDraft {
 
 }
 
+function makeCreateDraft(): CreateDraft {
+
+  const preset = ROLE_PRESETS.user;
+
+  return {
+
+    email: "",
+
+    username: "",
+
+    password: "",
+
+    role: preset.role,
+
+    module_access: [...preset.module_access],
+
+    hr_access: [...preset.hr_access],
+
+    stock_access: [...preset.stock_access],
+
+    can_manage_hr: preset.can_manage_hr,
+
+    can_manage_employees: preset.can_manage_employees,
+
+  };
+
+}
+
 
 
 function SettingsCard({ title, description, value, status }: SettingsCardProps) {
@@ -706,6 +747,10 @@ export default function SettingsPage() {
 
   const [disableTarget, setDisableTarget] = React.useState<ProfileRow | null>(null);
 
+  const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
+
+  const [createDraft, setCreateDraft] = React.useState<CreateDraft>(() => makeCreateDraft());
+
   const [loading, setLoading] = React.useState(true);
 
   const [loadingLogs, setLoadingLogs] = React.useState(false);
@@ -714,11 +759,15 @@ export default function SettingsPage() {
 
   const [changingDisabled, setChangingDisabled] = React.useState(false);
 
+  const [creatingUser, setCreatingUser] = React.useState(false);
+
   const [error, setError] = React.useState("");
 
   const [logsError, setLogsError] = React.useState("");
 
   const [editError, setEditError] = React.useState("");
+
+  const [createError, setCreateError] = React.useState("");
 
   const [info, setInfo] = React.useState("");
 
@@ -1168,6 +1217,194 @@ export default function SettingsPage() {
 
 
 
+  const openCreateDialog = () => {
+
+    setInfo("");
+
+    setCreateError("");
+
+    setCreateDraft(makeCreateDraft());
+
+    setCreateDialogOpen(true);
+
+  };
+
+
+  const closeCreateDialog = () => {
+
+    if (creatingUser) return;
+
+    setCreateDialogOpen(false);
+
+    setCreateError("");
+
+  };
+
+
+  const applyCreateRolePreset = (role: string) => {
+
+    const preset = ROLE_PRESETS[role] ?? ROLE_PRESETS.user;
+
+    setCreateDraft((current) => ({
+
+      ...current,
+
+      role: preset.role,
+
+      module_access: [...preset.module_access],
+
+      hr_access: [...preset.hr_access],
+
+      stock_access: [...preset.stock_access],
+
+      can_manage_hr: preset.can_manage_hr,
+
+      can_manage_employees: preset.can_manage_employees,
+
+    }));
+
+  };
+
+
+  const toggleCreateDraftValue = (
+
+    key: "module_access" | "hr_access" | "stock_access",
+
+    value: string
+
+  ) => {
+
+    setCreateDraft((current) => {
+
+      const values = current[key];
+
+      const nextValues = values.includes(value)
+
+        ? values.filter((item) => item !== value)
+
+        : [...values, value];
+
+
+      return {
+
+        ...current,
+
+        [key]: nextValues,
+
+      };
+
+    });
+
+  };
+
+
+  const saveNewUser = async () => {
+
+    const email = createDraft.email.trim().toLowerCase();
+
+    const username = createDraft.username.trim();
+
+    const password = createDraft.password;
+
+
+    if (!email) {
+
+      setCreateError("Email is required.");
+
+      return;
+
+    }
+
+
+    if (!password || password.length < 8) {
+
+      setCreateError("Password must contain at least 8 characters.");
+
+      return;
+
+    }
+
+
+    setCreatingUser(true);
+
+    setCreateError("");
+
+    setInfo("");
+
+
+    try {
+
+      const session = await ensureFreshSession();
+
+
+      const response = await fetch("/api/settings-create-user", {
+
+        method: "POST",
+
+        headers: {
+
+          "Content-Type": "application/json",
+
+          Authorization: `Bearer ${session.access_token}`,
+
+        },
+
+        body: JSON.stringify({
+
+          email,
+
+          password,
+
+          username,
+
+          role: createDraft.role,
+
+          module_access: createDraft.module_access,
+
+          hr_access: createDraft.hr_access,
+
+          stock_access: createDraft.stock_access,
+
+          can_manage_hr: createDraft.can_manage_hr,
+
+          can_manage_employees: createDraft.can_manage_employees,
+
+        }),
+
+      });
+
+
+      const result = await response.json().catch(() => null);
+
+
+      if (!response.ok) {
+
+        throw new Error(result?.error ?? "Unable to create user.");
+
+      }
+
+
+      closeCreateDialog();
+
+      setCreateDraft(makeCreateDraft());
+
+      await loadProfiles();
+
+      setInfo(`User created: ${email}`);
+
+    } catch (createUserError: any) {
+
+      setCreateError(createUserError?.message ?? "Unable to create user.");
+
+    } finally {
+
+      setCreatingUser(false);
+
+    }
+
+  };
+
+
   return (
 
     <Box
@@ -1496,7 +1733,7 @@ export default function SettingsPage() {
 
                     <Stack direction="row" spacing={1} flexWrap="wrap">
 
-                      <Button variant="outlined" disabled>
+                      <Button variant="outlined" onClick={openCreateDialog}>
 
                         Add user
 
@@ -2806,6 +3043,341 @@ export default function SettingsPage() {
 
       </Dialog>
 
+
+
+
+      <Dialog
+
+        open={createDialogOpen}
+
+        onClose={closeCreateDialog}
+
+        fullWidth
+
+        maxWidth="lg"
+
+      >
+
+        <DialogTitle sx={{ fontWeight: 900 }}>Add user</DialogTitle>
+
+
+        <DialogContent dividers>
+
+          <Stack spacing={3}>
+
+            <Alert severity="info">
+
+              This creates a Supabase Auth user through the secure server function
+
+              <strong> /api/settings-create-user</strong>. Never create users with
+
+              the service-role key in frontend code.
+
+            </Alert>
+
+
+            {createError ? <Alert severity="warning">{createError}</Alert> : null}
+
+
+            <Box
+
+              sx={{
+
+                display: "grid",
+
+                gridTemplateColumns: { xs: "1fr", md: "1.2fr 1fr 1fr" },
+
+                gap: 2,
+
+              }}
+
+            >
+
+              <TextField
+
+                label="Email"
+
+                type="email"
+
+                value={createDraft.email}
+
+                onChange={(event) =>
+
+                  setCreateDraft((current) => ({
+
+                    ...current,
+
+                    email: event.target.value,
+
+                  }))
+
+                }
+
+                fullWidth
+
+                required
+
+              />
+
+
+              <TextField
+
+                label="Username"
+
+                value={createDraft.username}
+
+                onChange={(event) =>
+
+                  setCreateDraft((current) => ({
+
+                    ...current,
+
+                    username: event.target.value,
+
+                  }))
+
+                }
+
+                fullWidth
+
+              />
+
+
+              <TextField
+
+                label="Temporary password"
+
+                type="password"
+
+                value={createDraft.password}
+
+                onChange={(event) =>
+
+                  setCreateDraft((current) => ({
+
+                    ...current,
+
+                    password: event.target.value,
+
+                  }))
+
+                }
+
+                fullWidth
+
+                required
+
+                helperText="Minimum 8 characters. The user can change it later."
+
+              />
+
+            </Box>
+
+
+            <Box
+
+              sx={{
+
+                display: "grid",
+
+                gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+
+                gap: 2,
+
+              }}
+
+            >
+
+              <FormControl fullWidth>
+
+                <InputLabel id="settings-create-role-label">Role</InputLabel>
+
+                <Select
+
+                  labelId="settings-create-role-label"
+
+                  label="Role"
+
+                  value={createDraft.role}
+
+                  onChange={(event) => applyCreateRolePreset(String(event.target.value))}
+
+                >
+
+                  {ROLE_OPTIONS.map((role) => (
+
+                    <MenuItem key={role} value={role}>
+
+                      {role}
+
+                    </MenuItem>
+
+                  ))}
+
+                </Select>
+
+              </FormControl>
+
+
+              <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+
+                <Typography variant="subtitle2" sx={{ fontWeight: 900, mb: 1 }}>
+
+                  Management flags
+
+                </Typography>
+
+
+                <FormGroup>
+
+                  <FormControlLabel
+
+                    control={
+
+                      <Checkbox
+
+                        checked={createDraft.can_manage_hr}
+
+                        onChange={(event) =>
+
+                          setCreateDraft((current) => ({
+
+                            ...current,
+
+                            can_manage_hr: event.target.checked,
+
+                          }))
+
+                        }
+
+                      />
+
+                    }
+
+                    label="Can manage HR"
+
+                  />
+
+
+                  <FormControlLabel
+
+                    control={
+
+                      <Checkbox
+
+                        checked={createDraft.can_manage_employees}
+
+                        onChange={(event) =>
+
+                          setCreateDraft((current) => ({
+
+                            ...current,
+
+                            can_manage_employees: event.target.checked,
+
+                          }))
+
+                        }
+
+                      />
+
+                    }
+
+                    label="Can manage employees"
+
+                  />
+
+                </FormGroup>
+
+              </Paper>
+
+            </Box>
+
+
+            <Box
+
+              sx={{
+
+                display: "grid",
+
+                gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr" },
+
+                gap: 2,
+
+              }}
+
+            >
+
+              <PermissionGroup
+
+                title="Module access"
+
+                options={MODULE_OPTIONS}
+
+                values={createDraft.module_access}
+
+                onToggle={(value) => toggleCreateDraftValue("module_access", value)}
+
+              />
+
+
+              <PermissionGroup
+
+                title="HR access"
+
+                options={HR_OPTIONS}
+
+                values={createDraft.hr_access}
+
+                onToggle={(value) => toggleCreateDraftValue("hr_access", value)}
+
+              />
+
+            </Box>
+
+
+            <PermissionGroup
+
+              title="Stock access"
+
+              options={STOCK_OPTIONS}
+
+              values={createDraft.stock_access}
+
+              onToggle={(value) => toggleCreateDraftValue("stock_access", value)}
+
+            />
+
+          </Stack>
+
+        </DialogContent>
+
+
+        <DialogActions>
+
+          <Button onClick={closeCreateDialog} disabled={creatingUser}>
+
+            Cancel
+
+          </Button>
+
+          <Button
+
+            variant="contained"
+
+            onClick={saveNewUser}
+
+            disabled={creatingUser}
+
+          >
+
+            {creatingUser ? "Creating..." : "Create user"}
+
+          </Button>
+
+        </DialogActions>
+
+      </Dialog>
 
 
 

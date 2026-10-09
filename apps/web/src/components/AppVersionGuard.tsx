@@ -1,7 +1,7 @@
 import * as React from "react";
 import { supabase } from "../lib/supabaseClient";
 
-const CURRENT_APP_VERSION = "2.12.1";
+const CURRENT_APP_VERSION = "2.12.2";
 const VERSION_STORAGE_KEY = "lite-v2.current-version";
 const CHECK_INTERVAL_MS = 60_000; // 1 minute
 
