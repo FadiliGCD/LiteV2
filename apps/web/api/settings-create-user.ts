@@ -190,6 +190,7 @@ export default {
         can_manage_hr: Boolean(body.can_manage_hr),
         can_manage_employees: Boolean(body.can_manage_employees),
         is_disabled: false,
+        must_change_password: true,
       };
 
       const { data: createdAuthUser, error: createAuthError } =

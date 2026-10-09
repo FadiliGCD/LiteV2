@@ -142,6 +142,15 @@ export default {
         return jsonResponse({ error: updatePasswordError.message }, 400);
       }
 
+      const { error: profileUpdateError } = await adminClient
+        .from("profiles")
+        .update({ must_change_password: true })
+        .eq("id", userId);
+
+      if (profileUpdateError) {
+        return jsonResponse({ error: profileUpdateError.message }, 500);
+      }
+
       await adminClient.from("app_audit_logs").insert({
         actor_user_id: actor.id,
         actor_email: actor.email ?? null,
